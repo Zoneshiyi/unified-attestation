@@ -1,0 +1,18 @@
+listen = "127.0.0.1:8080"
+
+[wasm]
+# allow_unsigned 默认 false（ADR 0011）。生产环境下必须保持 false。
+# 仅当本地开发期需要快速迭代不签名组件时才显式置 true。
+allow_unsigned = false
+registry_dir = "data/components"
+# 受信任组件 sha256（小写 hex）。新组件 build 后用
+#   sha256sum target/wasm32-wasip1/release/*.wasm
+# 重新填入。
+trusted_component_hashes = [
+  # mock_appraiser.wasm
+  "dfcfc162517558ca844bd6e26d5ea328ccb0ee8490f9bc5606912296c61a8222",
+]
+
+
+[ear]
+signing_key_path = "config/keys/ear_signing.pem"

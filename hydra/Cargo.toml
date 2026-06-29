@@ -1,0 +1,33 @@
+[package]
+name = "hydra"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ark-bls12-381 = { workspace = true }
+ark-groth16   = { workspace = true }
+ark-relations = { workspace = true }
+ark-r1cs-std  = { workspace = true }
+ark-ff        = { workspace = true }
+ark-std       = { workspace = true }
+ark-snark     = { workspace = true }
+ark-serialize = { workspace = true }
+ark-crypto-primitives = { workspace = true }
+num-bigint = { workspace = true }
+blake2 = { version = "0.10", default-features = false }
+
+[features]
+default = ["std"]
+# host 端构建启用 std + snark prover；wasm 组件构建关掉 default，只用 verify
+std = [
+    "ark-std/std",
+    "ark-ff/std",
+    "ark-r1cs-std/std",
+    "ark-relations/std",
+    "ark-bls12-381/std",
+    "ark-groth16/std",
+    "ark-crypto-primitives/std",
+    "ark-serialize/std",
+    "num-bigint/std",
+]

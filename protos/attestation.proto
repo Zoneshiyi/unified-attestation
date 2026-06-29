@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+package unified_attestation;
+
+// TEE 类型，与 protos::TeeType 对应。
+enum TeeType {
+  UNSPECIFIED = 0;
+  MOCK = 1;
+  CCA = 2;
+  CCA_HYDRA = 3;
+  TDX = 4;
+  TDX_HYDRA = 5;
+  CSV = 6;
+  CSV_HYDRA = 7;
+}
+
+// RP -> attester：取 evidence + 本机 wasm 组件。
+message GetEvidenceRequest {
+  TeeType tee_type = 1;
+  bytes nonce = 2;
+}
+
+message GetEvidenceResponse {
+  // evidence 字节流，内部结构由 wasm 组件约定。
+  bytes evidence = 1;
+  // attester 本机持有的 wasm 验证组件，RP 转给 verifier。
+  bytes wasm_component = 2;
+}
+
+// RP -> verifier：拿 EAR。
+message VerifyRequest {
+  TeeType tee_type = 1;
+  bytes nonce = 2;
+  bytes evidence = 3;
+  // 二选一：首次提交 wasm 字节，后续可用稳定 ID 复用。
+  oneof wasm {
+    bytes wasm_component = 4;
+    string wasm_component_id = 5;
+  }
+}
+
+message VerifyResponse {
+  // EAR JWT（ES256），RP 用 verifier 公钥本地校验。
+  string ear = 1;
+  // 已注册组件 ID，后续请求可用 wasm_component_id 复用。
+  string wasm_component_id = 2;
+}
+
+service AttesterService {
+  rpc GetEvidence(GetEvidenceRequest) returns (GetEvidenceResponse);
+}
+
+service VerifierService {
+  rpc Verify(VerifyRequest) returns (VerifyResponse);
+}

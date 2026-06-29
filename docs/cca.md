@@ -1,0 +1,199 @@
+# CCA 路径
+
+ARM CCA 远程证明：硬件根签名 + nonce 绑定。CCA 真验签放在 verifier host 端（与
+trustmee-artifact 一致），wasm appraiser 仅做字段透传与业务级 nonce 比对。
+
+## 时序图
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant RP as relying-party
+    participant At as attester
+    participant AA as attestation-agent<br/>(REST)
+    participant TEE as ARM CCA 硬件<br/>(RMM)
+    participant V as verifier host
+    participant W as wasm appraiser<br/>(cca)
+
+    RP->>RP: 生成 32B 随机 nonce
+    RP->>At: GetEvidence { tee_type=cca, nonce }
+
+    At->>AA: GET /aa/evidence?runtime_data=base64(nonce)
+    AA->>TEE: 请求 CCA token (challenge=nonce)
+    TEE-->>AA: CCA token (CBOR + COSE-Sign1)
+    AA-->>At: CCA token (base64)
+
+    Note over At: evidence = { cca_token_b64, nonce }
+    At-->>RP: { evidence, wasm_component }
+
+    RP->>V: Verify { tee_type=cca, nonce, evidence, wasm_component }
+
+    V->>V: ccatoken::Evidence::decode (CBOR)
+    V->>V: e.verify(ta_store)<br/>COSE-Sign1 / IAK / RAK 链
+    V->>V: e.appraise(rv_store)<br/>platform / realm 测量
+    V->>V: realm_claims.challenge == padded(nonce)
+
+    V->>W: evaluate(evidence, expected_report_data=nonce)
+    W-->>V: claims { subject, token_size, ... }
+
+    V->>V: policy.cca.trusted_subjects 比对
+    V-->>RP: EAR JWT (ES256)
+
+    RP->>RP: 用 verifier 公钥本地验签 + eat_nonce 比对
+```
+
+## 数据流
+
+```
+RP:
+  生成 32B 随机 nonce
+  GetEvidence(tee_type=cca, nonce) -> attester
+  Verify(tee_type=cca, nonce, evidence, wasm_component) -> verifier
+
+attester:
+  AA REST GET /aa/evidence?runtime_data=<base64(nonce)> -> CCA token
+  evidence = { cca_token_b64, nonce }
+
+verifier host:
+  ccatoken::Evidence::decode -> CBOR 解码
+  e.verify(&ta_store)         -> COSE-Sign1 / IAK / RAK 链
+  e.appraise(&rv_store)       -> platform / realm 测量比对
+  realm_tvec.instance_identity == Affirming
+  realm_claims.challenge == expected_report_data（nonce padded 到 64 B）
+  -> 通过后再调 wasm appraiser
+
+wasm appraiser (cca):
+  解 evidence JSON，回填 claims（subject 占位、token_size 等）
+```
+
+## 配置
+
+verifier 侧 `[policy.cca]`：
+
+| key | 含义 |
+|---|---|
+| `ta_store` | ccatoken trust anchor store JSON 路径，含 IAK 公钥 |
+| `rv_store` | reference value store JSON 路径，含 platform / realm 期望测量值 |
+| `trusted_subjects` | 可信 realm 主体白名单（业务层补充） |
+
+`ta_store` / `rv_store` 任一缺省 → host 端验签跳过，仅 demo 可用。
+
+attester 侧 `aa_endpoint` 指向 guest-components `api-server-rest`（默认
+`http://127.0.0.1:8006`）。
+
+## 端到端测试步骤
+
+需要 ARM CCA 硬件 + guest-components attestation-agent + api-server-rest。
+
+```bash
+# 1. 生成 ES256 密钥对（首次）
+bash scripts/gen-keys.sh
+
+# 2. 编译所有 wasm appraiser + host 二进制
+bash scripts/build-appraisers.sh
+cargo build --release -p verifier -p attester -p relying-party
+
+# 3. 启动 guest-components AA（自行准备）
+ttrpc-aa &
+api-server-rest --features attestation &
+
+# 4. 启动 verifier + attester
+./target/release/verifier --config config/verifier-cca.toml > /tmp/verifier-cca.log 2>&1 &
+./target/release/attester --config config/attester-cca.toml > /tmp/attester-cca.log 2>&1 &
+sleep 2
+
+# 5. RP 触发完整流程
+./target/release/relying-party \
+    --attester http://127.0.0.1:9000 \
+    --verifier http://127.0.0.1:8080 \
+    --tee-type cca \
+    --pubkey config/keys/ear_public.pem \
+    --ear-out /tmp/ear-cca.jwt
+```
+
+## CCA + hydra 叠加
+
+`tee_type = cca-hydra` 时，attester 同时携带 CCA token 与 Groth16 证明，
+共用同一 nonce。校验顺序：
+
+1. host 端 ccatoken 完整验签（同 CCA-only）
+2. wasm appraiser 内：
+   - CCA 字段中的 `nonce == base64url(expected_report_data)`
+   - hydra public_inputs 末位 == `nonce_to_scalar(expected_report_data)`
+   - Groth16 verify
+
+verifier 侧多一项 `[policy.hydra] trusted_roots_hex`，比对 wasm 返回的
+`roots_hex` 是否逐项匹配。
+
+`trusted_roots_hex` 由 `cargo run -p hydra --example shrubs_roots` 计算。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant RP as relying-party
+    participant At as attester
+    participant AA as attestation-agent
+    participant TEE as ARM CCA 硬件
+    participant ZK as hydra prover<br/>(attester 内)
+    participant V as verifier host
+    participant W as wasm appraiser<br/>(cca-hydra)
+
+    RP->>RP: 生成 32B 随机 nonce
+    RP->>At: GetEvidence { tee_type=cca-hydra, nonce }
+
+    par CCA 硬件证明
+        At->>AA: GET /aa/evidence?runtime_data=base64(nonce)
+        AA->>TEE: 请求 CCA token
+        TEE-->>AA: CCA token
+        AA-->>At: CCA token
+    and 设备身份 ZK 证明
+        At->>ZK: prove(devices, self_index, nonce)
+        ZK-->>At: Groth16 proof + public_inputs
+    end
+
+    Note over At: evidence = { cca_token_b64, nonce, proof, public_inputs }
+    At-->>RP: { evidence, wasm_component }
+
+    RP->>V: Verify { tee_type=cca-hydra, nonce, evidence, wasm_component }
+
+    V->>V: ccatoken host 验签 (同 CCA-only)
+
+    V->>W: evaluate(evidence, expected_report_data=nonce)
+    W->>W: CCA 字段 nonce == base64url(nonce)
+    W->>W: public_inputs[末位] == nonce_to_scalar(nonce)
+    W->>W: Groth16 verify(proof, public_inputs)
+    W-->>V: claims { roots_hex, ... }
+
+    V->>V: policy.cca + policy.hydra.trusted_roots_hex
+    V-->>RP: EAR JWT
+```
+
+### 端到端测试步骤（cca-hydra）
+
+在 CCA-only 步骤基础上多一步 hydra trusted setup，启动配置改为 `*-cca-hydra.toml`：
+
+```bash
+bash scripts/gen-keys.sh
+bash scripts/build-appraisers.sh
+cargo build --release -p verifier -p attester -p relying-party -p hydra
+
+# trusted setup（4 设备 → 3 root，1-step Merkle path），首次运行
+cargo run -p hydra --bin setup_keys --release -- 3 1 config/hydra-shrubs
+
+# 计算可信 root 列表（输出可直接填入 verifier-cca-hydra.toml 的 policy.hydra.trusted_roots_hex）
+cargo run -p hydra --example shrubs_roots --release
+
+ttrpc-aa &
+api-server-rest --features attestation &
+
+./target/release/verifier --config config/verifier-cca-hydra.toml > /tmp/verifier-cca-hydra.log 2>&1 &
+./target/release/attester --config config/attester-cca-hydra.toml > /tmp/attester-cca-hydra.log 2>&1 &
+sleep 2
+
+./target/release/relying-party \
+    --attester http://127.0.0.1:9000 \
+    --verifier http://127.0.0.1:8080 \
+    --tee-type cca-hydra \
+    --pubkey config/keys/ear_public.pem \
+    --ear-out /tmp/ear-cca-hydra.jwt
+```
