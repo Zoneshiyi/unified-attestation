@@ -1,0 +1,7 @@
+[package]
+name = "device_vc_chain"
+version = "0.0.1"
+edition = "2024.beta"
+
+[addresses]
+device_vc_chain = "0x0"
