@@ -5,6 +5,7 @@ members = [
     "verifier",
     "relying-party",
     "hydra-toolkit",
+     "tee-evidence",
 ]
 resolver = "3"
 
