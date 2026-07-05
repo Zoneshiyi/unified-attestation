@@ -13,7 +13,8 @@
 | `ear.signing_key_path` | — | EAR JWT 签名私钥（PEM, ES256） |
 | `policy.cca.ta_store` | — | ccatoken trust anchor store JSON 路径 |
 | `policy.cca.rv_store` | — | reference value store JSON 路径 |
-| `policy.cca.trusted_subjects` | `[]` | 可信 realm 主体白名单 |
+| `policy.cca.trusted_subjects` | `[]` | 可信 realm 主体白名单（cca-hydra 用） |
+| `policy.cca.trusted_rim_hex` | `[]` | 可信 Realm Initial Measurement 列表（hex） |
 | `policy.csv.enabled` | `false` | 是否启用 host 端 CSV 验签 |
 | `policy.csv.cert_dir` | `/opt/hygon/csv` | HSK/CEK 离线缓存目录 |
 | `policy.csv.allow_kds_fetch` | `false` | 离线未命中时是否走 KDS 在线拉取 |
@@ -31,7 +32,7 @@
 
 policy 的 `*_hex` 列表均空 → 对应 policy 跳过。生产部署中至少：
 
-- CCA：`ta_store` + `rv_store` + `trusted_subjects`
+- CCA：`ta_store` + `rv_store` + `trusted_subjects` + `trusted_rim_hex`
 - CSV：`enabled = true` + `cert_dir`（或 `allow_kds_fetch = true`） + `trusted_chip_ids`
 - hydra：`trusted_roots_hex`
 - TDX：`pccs_url` + 四项 `trusted_*_hex` / `accept_tcb_status` 全填

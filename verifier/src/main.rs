@@ -49,6 +49,12 @@ async fn main() -> Result<()> {
         );
     }
 
+    #[cfg(feature = "blockchain")]
+    let chain_config = {
+        use hydra::device_vc::ChainConfig;
+        ChainConfig::from_env().ok()
+    };
+
     let state = Arc::new(grpc::AppState {
         host,
         signing,
@@ -57,6 +63,8 @@ async fn main() -> Result<()> {
         tdx_policy: config.policy.tdx,
         cca_verifier,
         csv_verifier,
+        #[cfg(feature = "blockchain")]
+        chain_config,
     });
 
     let addr = config

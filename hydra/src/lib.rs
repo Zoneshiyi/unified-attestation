@@ -20,5 +20,7 @@ pub mod verify;
 pub mod prove;
 #[cfg(feature = "std")]
 pub mod setup;
+#[cfg(feature = "blockchain")]
+pub mod device_vc;
 
 pub use ark_bls12_381::{Bls12_381, Fr};

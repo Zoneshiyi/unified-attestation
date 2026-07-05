@@ -2197,6 +2197,7 @@ checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 name = "hydra"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "ark-bls12-381",
  "ark-crypto-primitives",
  "ark-ff",
@@ -2207,7 +2208,11 @@ dependencies = [
  "ark-snark",
  "ark-std",
  "blake2",
+ "hex",
  "num-bigint",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -3424,7 +3429,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -3461,9 +3466,9 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3671,6 +3676,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "clap",
+ "hydra",
  "jsonwebtoken",
  "prost",
  "protos",
@@ -5081,6 +5087,7 @@ dependencies = [
  "dcap-qvl",
  "ear",
  "hex",
+ "hydra",
  "jsonwebtoken",
  "prost",
  "protos",

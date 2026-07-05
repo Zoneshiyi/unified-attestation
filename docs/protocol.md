@@ -63,12 +63,15 @@ verifier 签发的 EAR 是 ES256 JWT。顶层 claims：
 
 ```text
 iss            = "unified-attestation-verifier"
-iat            = unix 秒
+iat            = unix 秒（签发时间）
+exp            = unix 秒（过期时间，iat + 3600）
+eat_profile    = "tag:github.com,2024:unified-attestation"
 eat_nonce      = base64url(RP nonce)
 tee_type       = "mock" | "cca" | "cca-hydra" | "csv" | "csv-hydra" | "tdx" | "tdx-hydra"
 component_id   = wasm 组件 ID
-submods        = wasm 返回的 claims map
-trust_vector   = { instance_identity, configuration, executables }
+verifier_id    = { developer: "unified-attestation" }
+submods        = wasm 返回的 claims map（含 per-TEE 度量值，见下）
+trust_vector   = { instance_identity, configuration, executables }（动态赋值，见下）
 ```
 
 RP 持有 verifier 公钥即可本地验签 + 解码 + 比对 `eat_nonce == 本地 nonce`：
@@ -82,3 +85,58 @@ relying-party \
 ```
 
 `executables < 2` 视为不可信。
+
+### Per-TEE Claims（submods 内）
+
+CCA 路径（`cca` / `cca-hydra`）：
+
+| 字段 | 来源 | 说明 |
+|------|------|------|
+| `cca_realm_initial_measurement` | host 验证后注入 | Realm Initial Measurement（hex），可信计算的核心度量值 |
+| `cca_realm_personalization_value` | host 验证后注入 | Realm 个性化值（hex） |
+| `cca_platform_instance_id` | host 验证后注入 | CCA 平台实例 ID（hex） |
+| `cca_platform_implementation_id` | host 验证后注入 | CCA 平台实现 ID（hex） |
+| `cca_platform_lifecycle` | host 验证后注入 | 平台安全生命周期状态：`secured` / `recoverable` / `not_secured` |
+| `cca_platform_sw_components` | host 验证后注入 | 平台软件组件列表，每个含 `measurement` / `signer_id` / `measurement_type` / `version` |
+| `nonce_bound` | wasm appraiser 校验 | nonce 绑定是否成功 |
+| `roots_hex` | hydra appraiser 校验 | （仅 cca-hydra）shrubs root 列表 |
+| `subject` | hydra appraiser 提取 | （仅 cca-hydra）设备标识，从 `cca_platform_instance_id` 提取 |
+
+CSV 路径（`csv` / `csv-hydra`）：
+
+| 字段 | 来源 | 说明 |
+|------|------|------|
+| `chip_id` | host 验证后注入 | 芯片序列号 |
+| `measurement` | host 验证后注入 | 度量值（hex） |
+| `vm_version` | host 验证后注入 | VM 固件版本号（hex） |
+| `policy_nodbg` | host 验证后注入 | 策略：是否禁止调试（0/1） |
+| `policy_noks` | host 验证后注入 | 策略：是否禁止密钥共享（0/1） |
+| `nonce_bound` | wasm appraiser 校验 | nonce 绑定是否成功 |
+| `roots_hex` | hydra appraiser 校验 | （仅 csv-hydra）shrubs root 列表 |
+| `subject` | hydra appraiser 提取 | （仅 csv-hydra）设备标识，从 `chip_id` 提取 |
+
+TDX 路径（`tdx` / `tdx-hydra`）：
+
+| 字段 | 来源 | 说明 |
+|------|------|------|
+| `mr_td` | wasm appraiser 提取 | TD 度量值（hex） |
+| `mr_seam` | wasm appraiser 提取 | SEAM 模块度量值（hex） |
+| `mr_config_id` | wasm appraiser 提取 | 配置 ID（hex） |
+| `report_data` | wasm appraiser 提取 | 报告数据绑定值（hex） |
+| `tcb_status` | wasm appraiser 提取 | TCB 状态：UpToDate / SWHardeningNeeded / OutOfDate / ... |
+| `advisory_ids` | wasm appraiser 提取 | 适用的安全公告 ID 列表 |
+| `nonce_bound` | wasm appraiser 校验 | nonce 绑定是否成功 |
+| `roots_hex` | hydra appraiser 校验 | （仅 tdx-hydra）shrubs root 列表 |
+
+### Trust Vector 动态赋值
+
+`trust_vector` 不再硬编码，根据验证结果动态设定：
+
+| TEE 类型 | `instance_identity` | `configuration` | `executables` |
+|---------|---------------------|-----------------|---------------|
+| **mock** | 2 | 2 | 2 |
+| **CCA / CCA-Hydra** | nonce_bound ? 2 : 0 | lifecycle=secured ? 2 : 1 | 2 |
+| **CSV / CSV-Hydra** | nonce_bound ? 2 : 0 | 2 | 2 |
+| **TDX / TDX-Hydra** | 2 | 2 | tcb_status=UpToDate ? 2 : SWHardeningNeeded ? 1 : 0 |
+
+AR4SI 取值含义：2 = Affirming（主张可信），1 = Warning（有告警），0 = None（不可信）。

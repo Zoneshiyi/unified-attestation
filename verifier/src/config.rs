@@ -49,6 +49,10 @@ pub struct CcaPolicy {
     /// 是否命中此列表（小写 hex），用于业务级白名单。
     #[serde(default)]
     pub trusted_subjects: Vec<String>,
+    /// 可信 Realm Initial Measurement 列表（hex）。非空时 wasm 组件返回的
+    /// `cca_realm_initial_measurement` 必须命中此列表。
+    #[serde(default)]
+    pub trusted_rim_hex: Vec<String>,
 }
 
 /// Hygon CSV policy。host 端 csv-rs 验签 + nonce 绑定。

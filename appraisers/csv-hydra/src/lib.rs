@@ -120,7 +120,15 @@ fn evaluate_impl(evidence: Vec<u8>, expected_report_data: Option<Vec<u8>>) -> St
         Err(e) => return json!({"error": e}).to_string(),
     };
 
-    json!({
+    let full: serde_json::Value =
+        serde_json::from_slice(&evidence).unwrap_or(serde_json::Value::Null);
+    let subject = full
+        .get("chip_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let mut claims = json!({
         "tee_type": "csv-hydra",
         "verification": if ok { "passed" } else { "failed" },
         "groth16": {
@@ -133,8 +141,25 @@ fn evaluate_impl(evidence: Vec<u8>, expected_report_data: Option<Vec<u8>>) -> St
         "challenge_bound_in_public_input": true,
         "nonce_bound": true,
         "roots_hex": roots_hex,
-    })
-    .to_string()
+        "subject": subject,
+    });
+    if let Some(obj) = claims.as_object_mut() {
+        passthrough_csv(&full, obj, "chip_id");
+        passthrough_csv(&full, obj, "measurement");
+        passthrough_csv(&full, obj, "policy_nodbg");
+        passthrough_csv(&full, obj, "policy_noks");
+    }
+    claims.to_string()
+}
+
+fn passthrough_csv(
+    evidence: &serde_json::Value,
+    claims: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) {
+    if let Some(v) = evidence.get(key) {
+        claims.insert(key.to_string(), v.clone());
+    }
 }
 
 struct Component;

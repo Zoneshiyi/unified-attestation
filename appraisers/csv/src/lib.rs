@@ -54,13 +54,31 @@ fn evaluate_impl(evidence: Vec<u8>, expected_report_data: Option<Vec<u8>>) -> St
         None => false,
     };
 
-    json!({
+    let full: serde_json::Value = serde_json::from_slice(&evidence).unwrap_or(serde_json::Value::Null);
+    let mut claims = json!({
         "tee_type": "csv",
         "verification": if nonce_ok { "passed" } else { "failed" },
         "nonce_bound": nonce_ok,
         "evidence_size": csv_evidence.len(),
-    })
-    .to_string()
+    });
+    if let Some(obj) = claims.as_object_mut() {
+        passthrough(&full, obj, "chip_id");
+        passthrough(&full, obj, "measurement");
+        passthrough(&full, obj, "vm_version");
+        passthrough(&full, obj, "policy_nodbg");
+        passthrough(&full, obj, "policy_noks");
+    }
+    claims.to_string()
+}
+
+fn passthrough(
+    evidence: &serde_json::Value,
+    claims: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) {
+    if let Some(v) = evidence.get(key) {
+        claims.insert(key.to_string(), v.clone());
+    }
 }
 
 struct Component;

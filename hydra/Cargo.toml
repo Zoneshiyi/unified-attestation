@@ -17,8 +17,17 @@ ark-crypto-primitives = { workspace = true }
 num-bigint = { workspace = true }
 blake2 = { version = "0.10", default-features = false }
 
+# blockchain feature 依赖（通过 cast CLI 交链，无区块链 SDK 依赖）
+anyhow = { workspace = true, optional = true }
+hex = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+
 [features]
 default = ["std"]
+# 设备 VC 链上存储（device_vc 模块），需要 Foundry `cast` CLI。默认不开启。
+blockchain = ["std", "anyhow", "hex", "serde", "serde_json", "sha2"]
 # host 端构建启用 std + snark prover；wasm 组件构建关掉 default，只用 verify
 std = [
     "ark-std/std",

@@ -14,6 +14,8 @@
 - `verify`：`verify_groth16` + `decode_public_inputs`，wasm32-wasip1 兼容
 - `prove` / `setup`：仅 std 启用（attester 用）
 
+- `device_vc`：设备 VC 链上存储（`blockchain` feature，默认不开启），通过 EVM 合约 + `cast` CLI 实现设备凭证的链上发布与查询
+
 `#![no_std]` + `extern crate alloc`，关闭 default features 后可交叉编译至
 wasm32-wasip1（仅暴露 verify 路径）。
 
@@ -57,6 +59,58 @@ cargo run -p hydra --bin setup_keys --release -- <root_count> <path_len> [out_di
 ```bash
 cargo run -p hydra --example shrubs_roots --release
 ```
+
+## 设备 VC 链上存储（blockchain feature）
+
+可选功能，默认不编译（`--features blockchain` 开启）。允许 verifier 在验证通过后
+将设备 VC 发布到 EVM 兼容链上的 `DeviceVCRecord` 合约，供 relying-party 独立查询。
+
+### 合约接口
+
+`contracts/DeviceVCRecord.sol`：
+
+- `storeVC(bytes32 devicePubkeyHash, string vcJson)` — 存储设备 VC（仅 owner 可调用）
+- `getVC(bytes32 devicePubkeyHash) returns (string, uint256)` — 查询最新 VC
+- `vcCount(bytes32 devicePubkeyHash) returns (uint256)` — VC 记录数
+
+同一 device 允许多次写入（过期后翻新），查询返回最新一条。
+
+### Rust SDK
+
+`hydra/src/device_vc.rs`，通过 `cast` CLI（Foundry）交互，无区块链 SDK 依赖：
+
+- `publish_device_vc_to_chain(record, config)` → `cast send` → 返回 tx hash
+- `query_device_vc_from_chain(device_pubkey, config)` → `cast call` → 返回 VC JSON
+- `build_background_check_record(...)` → 构造包含 W3C VC + DID Document 的 `DeviceVCRecord`
+- `DeviceVCCache` → 本地 JSON 文件缓存（upsert / expire / load / save）
+
+### 配置
+
+环境变量（必须全部设置）：
+
+```bash
+export CHAIN_RPC_URL=<EVM RPC 地址>
+export CHAIN_CONTRACT_ADDRESS=<DeviceVCRecord 合约地址>
+export CHAIN_PRIVATE_KEY=<verifier 私钥>
+```
+
+### 使用
+
+```bash
+# 编译（含区块链功能）
+cargo build --release --features blockchain -p verifier -p relying-party
+
+# 部署合约
+forge create --rpc-url "$CHAIN_RPC_URL" --private-key "$CHAIN_PRIVATE_KEY" \
+  contracts/DeviceVCRecord.sol:DeviceVCRecord
+
+# verifier 验证通过后自动上链（需设环境变量）
+
+# RP 查链上 VC
+./relying-party query-vc <device_pubkey_hex>
+```
+
+`query-vc` 仅在 `blockchain` feature 编译后可用。
 
 ## 已知小坑
 

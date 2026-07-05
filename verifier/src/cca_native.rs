@@ -7,10 +7,27 @@ use anyhow::{Context, Result, anyhow, bail};
 use ccatoken::store::{MemoRefValueStore, MemoTrustAnchorStore};
 use ccatoken::token::Evidence;
 use ear::TrustTier;
+use serde_json::Value;
 use std::io::Cursor;
 use tracing::warn;
 
 use crate::config::CcaPolicy;
+
+/// CCA 验证结果（含从 token 中提取的度量值）。
+pub struct CcaVerificationResult {
+    /// Realm Initial Measurement（hex）
+    pub realm_initial_measurement: Option<String>,
+    /// Realm Personalization Value（hex）
+    pub realm_personalization_value: Option<String>,
+    /// CCA Platform Instance ID（hex）
+    pub cca_platform_instance_id: Option<String>,
+    /// CCA Platform Implementation ID（hex）
+    pub cca_platform_implementation_id: Option<String>,
+    /// Platform lifecycle state ("secured" etc.)
+    pub cca_platform_lifecycle: Option<String>,
+    /// Platform software components
+    pub cca_platform_sw_components: Option<Vec<Value>>,
+}
 
 pub struct CcaVerifier {
     tas: MemoTrustAnchorStore,
@@ -37,8 +54,8 @@ impl CcaVerifier {
     }
 
     /// 验 CCA token：签名链 + RAK attestation + RV 比对 + nonce 绑定。
-    /// 返回原始 Evidence，调用方继续抽取 claims。
-    pub fn verify(&self, token: &[u8], expected_report_data: &[u8]) -> Result<Evidence> {
+    /// 返回结构化验证结果，含 realm claims 与 platform claims 中的关键度量值。
+    pub fn verify(&self, token: &[u8], expected_report_data: &[u8]) -> Result<CcaVerificationResult> {
         let cursor = Cursor::new(token.to_vec());
         let mut e = Evidence::decode(cursor).map_err(|err| anyhow!("decode CCA token: {err}"))?;
 
@@ -48,13 +65,58 @@ impl CcaVerifier {
             .map_err(|err| anyhow!("appraise CCA evidence: {err}"))?;
 
         let (_platform_tvec, realm_tvec) = e.get_trust_vectors();
-        if realm_tvec.instance_identity.tier() != TrustTier::Affirming {
+        let passed = realm_tvec.instance_identity.tier() == TrustTier::Affirming;
+
+        if !passed {
             bail!("CCA RAK signature or RAK attestation could not be verified");
         }
         if expected_report_data != e.realm_claims.challenge {
             bail!("CCA realm token challenge does not match expected_report_data");
         }
-        Ok(e)
+
+        let rim_hex = (!e.realm_claims.rim.is_empty())
+            .then(|| hex::encode(&e.realm_claims.rim));
+        let pv_hex = (!e.realm_claims.perso.is_empty())
+            .then(|| hex::encode(&e.realm_claims.perso));
+
+        let (plat_instance_id, plat_impl_id, plat_lifecycle, plat_sw_components) = {
+            let pt = &e.platform_claims;
+            let iid = Some(hex::encode(&pt.inst_id[..]));
+            let impid = Some(hex::encode(&pt.impl_id[..]));
+            let lc = match pt.lifecycle {
+                0x6000 | 0x6001 => Some("secured".to_string()),
+                0x3000 | 0x3001 => Some("recoverable".to_string()),
+                0x0000..=0x00ff => Some("not_secured".to_string()),
+                _ => Some(format!("0x{:04x}", pt.lifecycle)),
+            };
+            let sw: Option<Vec<Value>> = if pt.sw_components.is_empty() {
+                None
+            } else {
+                Some(
+                    pt.sw_components
+                        .iter()
+                        .map(|c| {
+                            serde_json::json!({
+                                "measurement": hex::encode(&c.mval),
+                                "signer_id": hex::encode(&c.signer_id),
+                                "measurement_type": c.mtyp,
+                                "version": c.version,
+                            })
+                        })
+                        .collect(),
+                )
+            };
+            (iid, impid, lc, sw)
+        };
+
+        Ok(CcaVerificationResult {
+            realm_initial_measurement: rim_hex,
+            realm_personalization_value: pv_hex,
+            cca_platform_instance_id: plat_instance_id,
+            cca_platform_implementation_id: plat_impl_id,
+            cca_platform_lifecycle: plat_lifecycle,
+            cca_platform_sw_components: plat_sw_components,
+        })
     }
 }
 

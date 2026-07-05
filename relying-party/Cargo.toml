@@ -9,6 +9,7 @@ anyhow.workspace = true
 base64.workspace = true
 clap.workspace = true
 jsonwebtoken.workspace = true
+hydra = { path = "../hydra", optional = true, features = ["blockchain"] }
 prost.workspace = true
 protos = { path = "../protos" }
 rand.workspace = true
@@ -18,3 +19,6 @@ tokio.workspace = true
 tonic.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+[features]
+blockchain = ["hydra/blockchain"]

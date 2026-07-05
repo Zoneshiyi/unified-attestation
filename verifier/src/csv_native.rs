@@ -37,6 +37,20 @@ struct CsvEvidenceJson {
     serial_number: Vec<u8>,
 }
 
+/// CSV 验证结果（含从 attestation report 中提取的度量值）。
+pub struct CsvVerificationResult {
+    /// 芯片 ID（serial_number trim 尾部 \0）
+    pub chip_id: Option<String>,
+    /// 度量值（hex）
+    pub measurement: Option<String>,
+    /// VM 版本号
+    pub vm_version: Option<String>,
+    /// 策略：是否禁止调试（0=false, 1=true）
+    pub policy_nodbg: Option<u32>,
+    /// 策略：是否禁止密钥共享（0=false, 1=true）
+    pub policy_noks: Option<u32>,
+}
+
 pub struct CsvVerifier {
     policy: CsvPolicy,
 }
@@ -57,8 +71,8 @@ impl CsvVerifier {
     }
 
     /// 完整验：链证书（HRK→HSK→CEK→PEK→report）+ report_data nonce 绑定。
-    /// 返回 chip_id 字符串（base64 后的 serial_number trim_end）。
-    pub fn verify(&self, evidence: &[u8], expected_report_data: &[u8]) -> Result<String> {
+    /// 返回结构化验证结果，含芯片 ID 与度量值。
+    pub fn verify(&self, evidence: &[u8], expected_report_data: &[u8]) -> Result<CsvVerificationResult> {
         let parsed: CsvEvidenceJson =
             serde_json::from_slice(evidence).context("decode CSV evidence JSON")?;
 
@@ -98,8 +112,24 @@ impl CsvVerifier {
         {
             bail!("CSV chip_id '{chip_id}' not in trusted list");
         }
+
+        // 提取度量值（注：csv-rs 的度量字段在 tee_info() 上）
+        let tee = report.tee_info();
+        let measure_bytes = tee.measure();
+        let measurement = (!measure_bytes.is_empty()).then(|| hex::encode(&measure_bytes));
+        let vm_version = Some(hex::encode(&tee.vm_version()));
+        let policy = tee.policy();
+        let policy_nodbg = Some(policy.nodbg());
+        let policy_noks = Some(policy.noks());
+
         info!(%chip_id, "CSV host verify passed");
-        Ok(chip_id)
+        Ok(CsvVerificationResult {
+            chip_id: Some(chip_id),
+            measurement,
+            vm_version,
+            policy_nodbg,
+            policy_noks,
+        })
     }
 
     /// 离线优先：<cert_dir>/hsk_cek/<chip_id>/hsk_cek.cert；

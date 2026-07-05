@@ -45,9 +45,10 @@ sequenceDiagram
     V->>V: csv-rs HRK→HSK→CEK→PEK→report 链验签
     V->>V: report.report_data == padded(nonce, 64)
     V->>V: chip_id 白名单（policy.csv.trusted_chip_ids）
+    V->>V: 提取度量值注入 evidence JSON（chip_id, measurement, vm_version, policy_nodbg, policy_noks）
 
     V->>W: evaluate(evidence, expected_report_data=nonce)
-    W-->>V: claims { tee_type=csv, nonce_bound=true, evidence_size }
+    W-->>V: claims { tee_type=csv, nonce_bound=true, evidence_size, chip_id, measurement, policy_nodbg, policy_noks }
 
     V-->>RP: EAR JWT (ES256)
     RP->>RP: 用 verifier 公钥本地验签 + eat_nonce 比对

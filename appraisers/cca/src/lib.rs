@@ -48,7 +48,6 @@ fn evaluate_impl(evidence: Vec<u8>, expected_report_data: Option<Vec<u8>>) -> St
         }
     };
 
-    // nonce 绑定校验：evidence 中的 nonce 必须与 verifier 传来的 expected_report_data 一致
     let nonce_ok = match expected_report_data.as_deref() {
         Some(report_data) => {
             let expected_nonce =
@@ -58,13 +57,38 @@ fn evaluate_impl(evidence: Vec<u8>, expected_report_data: Option<Vec<u8>>) -> St
         None => false,
     };
 
-    json!({
+    // 透传 host 端已注入的 CCA 度量值（从 evidence JSON 根级字段读取）
+    let full: serde_json::Value = match serde_json::from_slice(&evidence) {
+        Ok(v) => v,
+        Err(_) => serde_json::Value::Null,
+    };
+
+    let mut claims = json!({
         "tee_type": "cca",
         "verification": if nonce_ok { "passed" } else { "failed" },
         "nonce_bound": nonce_ok,
         "token_size": cca_token.len(),
-    })
-    .to_string()
+    });
+    if let Some(obj) = claims.as_object_mut() {
+        passthrough(&full, obj, "cca_realm_initial_measurement");
+        passthrough(&full, obj, "cca_realm_personalization_value");
+        passthrough(&full, obj, "cca_platform_instance_id");
+        passthrough(&full, obj, "cca_platform_implementation_id");
+        passthrough(&full, obj, "cca_platform_lifecycle");
+        passthrough(&full, obj, "cca_platform_sw_components");
+    }
+    claims.to_string()
+}
+
+/// 从 evidence JSON 根级读取 key，如存在则写入 claims。
+fn passthrough(
+    evidence: &serde_json::Value,
+    claims: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) {
+    if let Some(v) = evidence.get(key) {
+        claims.insert(key.to_string(), v.clone());
+    }
 }
 
 struct Component;

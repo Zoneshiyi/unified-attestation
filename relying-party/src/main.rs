@@ -10,7 +10,7 @@
 use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64URL;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation};
 use protos::attester_service_client::AttesterServiceClient;
 use protos::verifier_service_client::VerifierServiceClient;
@@ -24,21 +24,35 @@ use tracing_subscriber::EnvFilter;
 #[derive(Parser, Debug)]
 #[command(version, about = "unified-attestation relying-party")]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+
     /// attester gRPC 端点，例 `http://127.0.0.1:9000`。
     #[arg(long)]
-    attester: String,
+    attester: Option<String>,
     /// verifier gRPC 端点，例 `http://127.0.0.1:8080`。
     #[arg(long)]
-    verifier: String,
+    verifier: Option<String>,
     /// TEE 类型，需与 attester 配置一致。
     #[arg(long, value_parser = parse_tee_type)]
-    tee_type: TeeType,
+    tee_type: Option<TeeType>,
     /// verifier 的 ES256 公钥（PEM 格式）。
     #[arg(long)]
-    pubkey: PathBuf,
+    pubkey: Option<PathBuf>,
     /// 可选：把 EAR 写到文件以便调试。
     #[arg(long)]
     ear_out: Option<PathBuf>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// 从链上查询设备 VC（需 `blockchain` feature + Foundry `cast` CLI）
+    #[cfg(feature = "blockchain")]
+    #[command(name = "query-vc")]
+    QueryVc {
+        /// 设备公钥 hex
+        device_pubkey: String,
+    },
 }
 
 fn parse_tee_type(s: &str) -> Result<TeeType, String> {
@@ -60,8 +74,24 @@ async fn main() -> Result<()> {
         .init();
     let cli = Cli::parse();
 
+    // query-vc 子命令：查链上 VC，不跑远程证明
+    #[cfg(feature = "blockchain")]
+    if let Some(Command::QueryVc { device_pubkey }) = cli.command {
+        use hydra::device_vc::{ChainConfig, query_device_vc_from_chain};
+        let cfg = ChainConfig::from_env().context("chain config")?;
+        let vc = query_device_vc_from_chain(&device_pubkey, &cfg)?;
+        println!("{}", serde_json::to_string_pretty(&vc)?);
+        return Ok(());
+    }
+
+    // 标准远程证明流程
+    let attester = cli.attester.context("--attester required")?;
+    let verifier = cli.verifier.context("--verifier required")?;
+    let tee_type = cli.tee_type.context("--tee-type required")?;
+    let pubkey = cli.pubkey.context("--pubkey required")?;
+
     let pem =
-        std::fs::read(&cli.pubkey).with_context(|| format!("read pubkey {}", cli.pubkey.display()))?;
+        std::fs::read(&pubkey).with_context(|| format!("read pubkey {}", pubkey.display()))?;
     let key = DecodingKey::from_ec_pem(&pem).context("parse pubkey as EC PEM")?;
 
     // 1. nonce
@@ -72,12 +102,12 @@ async fn main() -> Result<()> {
     info!(nonce = %nonce_b64, "generated nonce");
 
     // 2. attester
-    let mut att = AttesterServiceClient::connect(cli.attester.clone())
+    let mut att = AttesterServiceClient::connect(attester.clone())
         .await
-        .with_context(|| format!("connect attester {}", cli.attester))?;
+        .with_context(|| format!("connect attester {attester}"))?;
     let evidence = att
         .get_evidence(GetEvidenceRequest {
-            tee_type: cli.tee_type as i32,
+            tee_type: tee_type as i32,
             nonce: nonce.to_vec(),
         })
         .await
@@ -90,12 +120,12 @@ async fn main() -> Result<()> {
     );
 
     // 3. verifier
-    let mut ver = VerifierServiceClient::connect(cli.verifier.clone())
+    let mut ver = VerifierServiceClient::connect(verifier.clone())
         .await
-        .with_context(|| format!("connect verifier {}", cli.verifier))?;
+        .with_context(|| format!("connect verifier {verifier}"))?;
     let resp = ver
         .verify(VerifyRequest {
-            tee_type: cli.tee_type as i32,
+            tee_type: tee_type as i32,
             nonce: nonce.to_vec(),
             evidence: evidence.evidence,
             wasm: Some(Wasm::WasmComponent(evidence.wasm_component)),
@@ -109,9 +139,6 @@ async fn main() -> Result<()> {
     }
 
     // 4. EAR 验签
-    // 关掉 jsonwebtoken 默认的 spec_claims（exp/aud/sub）与 exp 校验：
-    // EAR 顶层 claims 走 EAT 标准（iat/eat_nonce/...），没有 RFC 7519 的 exp 字段，
-    // 默认校验会报 "Missing required claim: exp"。新鲜度由 RP 自己用 nonce 防重放兜底。
     let mut validation = Validation::new(Algorithm::ES256);
     validation.required_spec_claims.clear();
     validation.validate_exp = false;

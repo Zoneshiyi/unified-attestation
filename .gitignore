@@ -1,8 +1,5 @@
-**/target/
-**/*.rs.bk
+target/
 data/
-*.wasm
-.DS_Store
 # 脚本生成的密钥与 trusted setup 产物
 config/keys/
 config/hydra-shrubs/

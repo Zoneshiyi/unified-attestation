@@ -129,7 +129,16 @@ fn evaluate_impl(evidence: Vec<u8>, expected_report_data: Option<Vec<u8>>) -> St
         Err(e) => return json!({"error": e}).to_string(),
     };
 
-    json!({
+    // 从 evidence JSON 根级提取 host 注入的 CCA 度量值
+    let full: serde_json::Value =
+        serde_json::from_slice(&evidence).unwrap_or(serde_json::Value::Null);
+    let subject = full
+        .get("cca_platform_instance_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let mut claims = json!({
         "tee_type": "cca-hydra",
         "verification": if ok { "passed" } else { "failed" },
         "groth16": {
@@ -142,10 +151,24 @@ fn evaluate_impl(evidence: Vec<u8>, expected_report_data: Option<Vec<u8>>) -> St
         "challenge_bound_in_public_input": true,
         "nonce_bound": true,
         "roots_hex": roots_hex,
-        // CCA token 内部 subject / claims 解析延后，先暴露 placeholder 供 policy 占位。
-        "subject": "",
-    })
-    .to_string()
+        "subject": subject,
+    });
+    if let Some(obj) = claims.as_object_mut() {
+        passthrough_str(&full, obj, "cca_realm_initial_measurement");
+        passthrough_str(&full, obj, "cca_platform_instance_id");
+        passthrough_str(&full, obj, "cca_platform_lifecycle");
+    }
+    claims.to_string()
+}
+
+fn passthrough_str(
+    evidence: &serde_json::Value,
+    claims: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) {
+    if let Some(v) = evidence.get(key) {
+        claims.insert(key.to_string(), v.clone());
+    }
 }
 
 struct Component;

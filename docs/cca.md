@@ -60,10 +60,17 @@ verifier host:
   e.appraise(&rv_store)       -> platform / realm 测量比对
   realm_tvec.instance_identity == Affirming
   realm_claims.challenge == expected_report_data（nonce padded 到 64 B）
-  -> 通过后再调 wasm appraiser
+  -> 通过后提取 CCA 度量值注入 evidence JSON：
+     · cca_realm_initial_measurement  （RIM, hex）
+     · cca_realm_personalization_value  （perso, hex）
+     · cca_platform_instance_id  （hex）
+     · cca_platform_implementation_id  （hex）
+     · cca_platform_lifecycle  （"secured" / "recoverable" / "not_secured"）
+     · cca_platform_sw_components  （数组）
 
 wasm appraiser (cca):
-  解 evidence JSON，回填 claims（subject 占位、token_size 等）
+  解 evidence JSON，校验 nonce 绑定，将 host 注入字段透传到 claims
+  输出：tee_type, verification, nonce_bound, token_size + 以上 6 个 CCA 度量字段
 ```
 
 ## 配置
@@ -74,9 +81,11 @@ verifier 侧 `[policy.cca]`：
 |---|---|
 | `ta_store` | ccatoken trust anchor store JSON 路径，含 IAK 公钥 |
 | `rv_store` | reference value store JSON 路径，含 platform / realm 期望测量值 |
-| `trusted_subjects` | 可信 realm 主体白名单（业务层补充） |
+| `trusted_subjects` | 可信 realm 主体白名单（cca-hydra 用） |
+| `trusted_rim_hex` | 可信 RIM 列表（hex），非空时 `cca_realm_initial_measurement` 必须命中 |
 
 `ta_store` / `rv_store` 任一缺省 → host 端验签跳过，仅 demo 可用。
+`trusted_rim_hex` 空时跳过 RIM 比对，生产建议配置以确认运行了预期 Realm 镜像。
 
 attester 侧 `aa_endpoint` 指向 guest-components `api-server-rest`（默认
 `http://127.0.0.1:8006`）。
