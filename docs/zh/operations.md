@@ -23,11 +23,11 @@
 
 各 TEE 端到端测试步骤需在对应硬件环境下手动执行，命令清单见各 TEE 文档：
 
-- CCA / CCA + hydra：[docs/cca.md](cca.md)
-- Hygon CSV / CSV + hydra：[docs/csv.md](csv.md)
-- TDX / TDX + hydra：[docs/tdx.md](tdx.md)
-- iTrustee：需 iTrustee TEE 硬件 + libqca.so + libteeverifier.so（测试命令见下文）
-- VirtCCA：需 VirtCCA TEE 硬件 + libvccaattestation.so + OpenSSL（测试命令见下文）
+- CCA / CCA + hydra：[cca.md](cca.md)
+- Hygon CSV / CSV + hydra：[csv.md](csv.md)
+- TDX / TDX + hydra：[tdx.md](tdx.md)
+- iTrustee：[itrustee.md](itrustee.md) — 需 iTrustee TEE 硬件 + libqca.so + libteeverifier.so
+- VirtCCA：[virtcca.md](virtcca.md) — 需 VirtCCA TEE 硬件 + libvccaattestation.so + OpenSSL
 
 ### iTrustee 端到端测试
 

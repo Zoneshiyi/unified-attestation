@@ -1,41 +1,42 @@
-# DeviceVCRecord 合约部署说明
+# DeviceVCRecord Contract Deployment Guide
 
-## 前置条件
+## Prerequisites
 
-- [Foundry](https://book.getfoundry.sh/) 工具链：`forge`, `cast`
-- EVM 兼容链的 RPC 端点
-- 部署用私钥（需有 gas token）
+- [Foundry](https://book.getfoundry.sh/) toolchain: `forge`, `cast`
+- RPC endpoint for an EVM-compatible chain
+- Private key with gas tokens for deployment
 
-## 部署
+## Deploy
 
 ```bash
-# 设置环境变量
-export RPC_URL=<链 RPC 地址>
-export PRIVATE_KEY=<部署者私钥>
+# Set environment variables
+export RPC_URL=<chain RPC URL>
+export PRIVATE_KEY=<deployer private key>
 
-# 部署合约
+# Deploy contract
 forge create \
   --rpc-url "$RPC_URL" \
   --private-key "$PRIVATE_KEY" \
   contracts/DeviceVCRecord.sol:DeviceVCRecord
 ```
 
-部署完成后会输出合约地址（`Deployed to: 0x...`），该地址用于 verifier 配置中的 `CHAIN_CONTRACT_ADDRESS`。
+After deployment, the contract address is printed (`Deployed to: 0x...`). Use this address
+as `CHAIN_CONTRACT_ADDRESS` in the verifier configuration.
 
-## 交互示例
+## Interaction Examples
 
 ```bash
-# 查询某设备的最新 VC（pubkey_hash 需转为 bytes32 hex）
+# Query the latest VC for a device (pubkey_hash must be bytes32 hex)
 cast call <CONTRACT_ADDRESS> \
   "getVC(bytes32)(string,uint256)" \
   <DEVICE_PUBKEY_HASH>
 
-# 查询某设备的 VC 记录数
+# Query the VC record count for a device
 cast call <CONTRACT_ADDRESS> \
   "vcCount(bytes32)" \
   <DEVICE_PUBKEY_HASH>
 
-# 查看 VCStored 事件
+# View VCStored events
 cast logs --address <CONTRACT_ADDRESS> \
   "VCStored(bytes32,uint256)"
 ```

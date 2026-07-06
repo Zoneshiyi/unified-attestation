@@ -1,10 +1,11 @@
-//! hydra：unified-attestation 的最小 zk 子集
+//! hydra: minimal zk subset for unified-attestation
 //!
-//! 包含 Groth16 over BLS12-381 的 setup / prove / verify 三件套，
-//! 一份 attestation circuit，以及 shrubs tree 与 Poseidon 的薄包装。
+//! Contains Groth16 over BLS12-381 setup / prove / verify, an attestation circuit,
+//! and thin wrappers for shrubs tree and Poseidon hash.
 //!
-//! - 关闭 default features 时仍可编 wasm32-wasip1，仅暴露 verify 路径
-//! - 与 hydra 主项目算法独立，VK / Proof 序列化格式不互通
+//! - With default features disabled, compiles to wasm32-wasip1, exposing only the verify path
+//! - Algorithmically independent from the main hydra project; VK / Proof serialization
+//!   formats are not interoperable
 
 #![cfg_attr(not(feature = "std"), no_std)]
 

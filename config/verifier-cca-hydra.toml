@@ -10,11 +10,11 @@ trusted_component_hashes = [
 
 
 [ear]
-signing_key_path = "config/keys/ear_signing.pem"
-
-# CCA + hydra 双层 policy。两层任一不满足都拒收。
-# trusted_subjects 当前为空（appraiser 暂未解析 CCA token 内部 subject）；
-# trusted_roots_hex 来源：cargo run -p hydra --example shrubs_roots
+# CCA + hydra dual-layer policy. Evidence is rejected if either layer fails.
+# trusted_subjects is currently empty (appraiser does not yet parse CCA token internal subject);
+# trusted_roots_hex source: cargo run -p hydra --example shrubs_roots
+# trusted_subjects is currently empty (appraiser does not yet parse CCA token internal subject);
+# trusted_roots_hex source: cargo run -p hydra --example shrubs_roots
 [policy.cca]
 trusted_subjects = []
 

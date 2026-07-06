@@ -1,31 +1,34 @@
-//! VirtCCA 验证组件
+//! VirtCCA verification component.
 //!
-//! VirtCCA 真验签依赖原生 OpenSSL + CBOR/COSE 证书链（Huawei Root CA），
-//! wasm 内不做重签名验签。本组件校验 nonce 绑定并透传 host 端注入的验证结果。
+//! Real signature verification for VirtCCA requires native OpenSSL + CBOR/COSE
+//! certificate chain (Huawei Root CA). Re-signature verification is NOT
+//! performed inside wasm. This component validates nonce binding and passes
+//! through verification results injected by the host.
 //!
-//! Evidence schema（attester 封装后）：
+//! Evidence schema (after attester wraps it):
 //! ```text
 //! {
-//!   "evidence": [<CBOR/COSE token 字节数组>],
-//!   "dev_cert": [<设备证书 DER 字节数组>],
+//!   "evidence": [<CBOR/COSE token byte array>],
+//!   "dev_cert": [<device certificate DER byte array>],
 //!   "nonce": "<base64url nonce>",
-//!   "ima_log": [<可选>],
-//!   "event_log": [<可选>]
+//!   "ima_log": [<optional>],
+//!   "event_log": [<optional>]
 //! }
 //! ```
 //!
-//! host 端验证通过后会注入以下字段到 evidence JSON 根层：
-//! - `virtcca_rim`：RIM（hex）
-//! - `virtcca_rpv`：RPV（hex）
-//! - `virtcca_challenge`：challenge（hex）
-//! - `virtcca_is_platform`：是否有 platform token
-//! - `virtcca_platform_sw_components`：平台软件组件列表
+//! After the host completes verification, the following fields are injected
+//! into the root level of the evidence JSON:
+//! - `virtcca_rim`: RIM (hex)
+//! - `virtcca_rpv`: RPV (hex)
+//! - `virtcca_challenge`: challenge (hex)
+//! - `virtcca_is_platform`: whether a platform token is present
+//! - `virtcca_platform_sw_components`: platform software component list
 //!
-//! claims：
-//! - `tee_type`：固定 "virtcca"
-//! - `verification`：passed / failed（基于 nonce 绑定）
-//! - `nonce_bound`：bool
-//! - `token_size` / `cert_size` / `ima_log_size` / `event_log_size`：字节大小
+//! Claims:
+//! - `tee_type`: always "virtcca"
+//! - `verification`: passed / failed (based on nonce binding)
+//! - `nonce_bound`: bool
+//! - `token_size` / `cert_size` / `ima_log_size` / `event_log_size`: byte sizes
 
 use base64::Engine;
 use serde::Deserialize;
@@ -47,7 +50,7 @@ struct VirtccaEvidence {
     ima_log: Option<Vec<u8>>,
     #[serde(default)]
     event_log: Option<Vec<u8>>,
-    // host 端注入字段（可选）
+    // Host-injected fields (optional).
     #[serde(default)]
     virtcca_rim: Option<String>,
     #[serde(default)]
@@ -61,6 +64,7 @@ struct VirtccaEvidence {
 }
 
 fn evaluate_impl(evidence: Vec<u8>, expected_report_data: Option<Vec<u8>>) -> String {
+    // Parse the evidence JSON into a VirtccaEvidence struct.
     let parsed: VirtccaEvidence = match serde_json::from_slice(&evidence) {
         Ok(v) => v,
         Err(e) => {
@@ -68,6 +72,7 @@ fn evaluate_impl(evidence: Vec<u8>, expected_report_data: Option<Vec<u8>>) -> St
         }
     };
 
+    // Compare the evidence nonce with the expected nonce (report_data base64url-encoded).
     let nonce_ok = match expected_report_data.as_deref() {
         Some(report_data) => {
             let expected_nonce =
@@ -77,11 +82,13 @@ fn evaluate_impl(evidence: Vec<u8>, expected_report_data: Option<Vec<u8>>) -> St
         None => false,
     };
 
+    // Extract sizes for diagnostics.
     let token_size = parsed.evidence.len();
     let cert_size = parsed.dev_cert.len();
     let ima_log_size = parsed.ima_log.as_ref().map(|v| v.len());
     let event_log_size = parsed.event_log.as_ref().map(|v| v.len());
 
+    // Build the claims map with base fields.
     let mut claims = json!({
         "tee_type": "virtcca",
         "verification": if nonce_ok { "passed" } else { "failed" },
@@ -89,6 +96,7 @@ fn evaluate_impl(evidence: Vec<u8>, expected_report_data: Option<Vec<u8>>) -> St
         "token_size": token_size,
         "cert_size": cert_size,
     });
+    // Conditionally insert host-injected and optional fields.
     if let Some(obj) = claims.as_object_mut() {
         if let Some(ref v) = parsed.virtcca_rim {
             obj.insert("rim".into(), v.clone().into());
@@ -134,6 +142,7 @@ impl GuestVerifier for Verifier {
         expected_report_data: OptionalData,
         _expected_init_data_hash: OptionalData,
     ) -> String {
+        // Convert OptionalData enum to Option<Vec<u8>> for easier handling.
         let report_data = match expected_report_data {
             OptionalData::Value(v) => Some(v),
             OptionalData::NotProvided => None,

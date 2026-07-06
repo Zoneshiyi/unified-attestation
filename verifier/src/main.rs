@@ -1,7 +1,14 @@
-//! verifier 主入口。
+//! Verifier entry point.
 //!
-//! 启动 tonic gRPC 服务，仅暴露 VerifierService.Verify。
-//! RP 自行生成 nonce 并随 evidence 一起提交。
+//! Starts a tonic gRPC server exposing only VerifierService.Verify.
+//! The RP generates its own nonce and submits it alongside evidence; the verifier is stateless.
+//!
+//! Startup sequence:
+//! 1. Parse TOML config
+//! 2. Initialize wasmtime host (load whitelist + previously registered components)
+//! 3. Initialize EAR signing context (ES256 private key)
+//! 4. Load host-side verifiers per config (CCA / CSV, optional)
+//! 5. Assemble AppState → start gRPC server
 
 mod cca_native;
 mod config;
@@ -30,6 +37,7 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Log level controllable via RUST_LOG env var; defaults to info
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
@@ -38,11 +46,15 @@ async fn main() -> Result<()> {
     let config = config::Config::load(&cli.config)
         .with_context(|| format!("load config from {}", cli.config.display()))?;
 
+    // wasmtime host: manages component registration, whitelist validation, sandbox invocation
     let host = wasm_host::WasmHost::new(&config).await?;
+    // EAR JWT signing context: loads ES256 private key
     let signing = ear::SigningContext::new(&config.ear)?;
 
+    // CCA host-side verifier: missing ta_store or rv_store → None (skip verification, demo only)
     let cca_verifier = cca_native::CcaVerifier::load(&config.policy.cca)?;
     cca_native::warn_no_store(&config.policy.cca);
+    // CSV host-side verifier: skipped when enabled=false
     let csv_verifier = csv_native::CsvVerifier::load(&config.policy.csv);
     if !config.policy.csv.enabled {
         tracing::warn!(
@@ -51,12 +63,14 @@ async fn main() -> Result<()> {
         );
     }
 
+    // Blockchain feature: read chain config from env vars (requires `blockchain` feature)
     #[cfg(feature = "blockchain")]
     let chain_config = {
         use hydra::device_vc::ChainConfig;
         ChainConfig::from_env().ok()
     };
 
+    // Assemble global state shared across all gRPC handlers via Arc
     let state = Arc::new(grpc::AppState {
         host,
         signing,

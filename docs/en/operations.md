@@ -24,8 +24,8 @@ End-to-end test steps for each TEE require the corresponding hardware environmen
 - CCA / CCA + hydra: [cca.md](cca.md)
 - Hygon CSV / CSV + hydra: [csv.md](csv.md)
 - TDX / TDX + hydra: [tdx.md](tdx.md)
-- iTrustee: requires iTrustee TEE hardware + libqca.so + libteeverifier.so (test commands below)
-- VirtCCA: requires VirtCCA TEE hardware + libvccaattestation.so + OpenSSL (test commands below)
+- iTrustee: [itrustee.md](itrustee.md) — requires iTrustee TEE hardware + libqca.so + libteeverifier.so
+- VirtCCA: [virtcca.md](virtcca.md) — requires VirtCCA TEE hardware + libvccaattestation.so + OpenSSL
 
 ### iTrustee End-to-End Test
 

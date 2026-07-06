@@ -3,7 +3,7 @@ tee_type = "cca-hydra"
 wasm_component_path = "target/wasm32-wasip1/release/cca_hydra_appraiser.wasm"
 aa_endpoint = "http://127.0.0.1:8006"
 
-# 与 verifier-cca-hydra.toml 中 [policy.hydra] 共配套：设备列表对应 trusted_roots_hex。
+# Must match [policy.hydra] in verifier-cca-hydra.toml: device list corresponds to trusted_roots_hex.
 [zk]
 proving_key_path = "config/hydra-shrubs/attestation_pk.bin"
 verifying_key_path = "config/hydra-shrubs/attestation_vk.bin"

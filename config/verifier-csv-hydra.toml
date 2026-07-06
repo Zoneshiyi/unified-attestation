@@ -11,10 +11,10 @@ trusted_component_hashes = [
 [ear]
 signing_key_path = "config/keys/ear_signing.pem"
 
-# CSV + hydra 双层 policy。两层任一不满足都拒收。
-# - policy.csv：host 端 csv-rs 链验签 + chip_id 白名单（同 CSV-only）
-# - policy.hydra：trusted_roots_hex 来源 cargo run -p hydra --example shrubs_roots
-[policy.csv]
+# CSV + hydra dual-layer policy. Evidence is rejected if either layer fails.
+# CSV + hydra dual-layer policy. Evidence is rejected if either layer fails.
+# - policy.csv: host-side csv-rs chain verification + chip_id whitelist (same as CSV-only)
+# - policy.hydra: trusted_roots_hex source: cargo run -p hydra --example shrubs_roots
 enabled = true
 allow_kds_fetch = false
 trusted_chip_ids = []

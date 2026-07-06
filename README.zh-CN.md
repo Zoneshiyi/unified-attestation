@@ -110,8 +110,8 @@ sequenceDiagram
 | CCA / CCA + hydra | [docs/zh/cca.md](docs/zh/cca.md) | ARM CCA + [guest-components](https://github.com/SmartTree-zq1997/guest-components) |
 | CSV / CSV + hydra | [docs/zh/csv.md](docs/zh/csv.md) | Hygon CSV + AA + HSK/CEK 缓存或 KDS                                                   |
 | TDX / TDX + hydra | [docs/zh/tdx.md](docs/zh/tdx.md) | Intel TDX + AA + PCS / PCCS 可达                                                     |
-| iTrustee              | [docs/zh/protocol.md](docs/zh/protocol.md#per-tee-claims-submods-内)  | iTrustee TEE + libteeverifier.so                                           |
-| VirtCCA               | [docs/zh/protocol.md](docs/zh/protocol.md#per-tee-claims-submods-内)  | VirtCCA TEE + libvccaattestation.so                                         |
+| iTrustee              | [docs/zh/itrustee.md](docs/zh/itrustee.md)  | iTrustee TEE + libteeverifier.so                                           |
+| VirtCCA               | [docs/zh/virtcca.md](docs/zh/virtcca.md)    | VirtCCA TEE + libvccaattestation.so                                         |
 
 
 支持的 `tee_type` 取值：`mock` / `cca` / `cca-hydra` / `csv` / `csv-hydra` / `tdx` / `tdx-hydra` / `itrustee` / `virtcca`。
@@ -220,6 +220,8 @@ unified-attestation/
 | CCA / CCA + hydra 路径              | [docs/zh/cca.md](docs/zh/cca.md)               |
 | Hygon CSV / CSV + hydra 路径        | [docs/zh/csv.md](docs/zh/csv.md)               |
 | TDX / TDX + hydra 路径              | [docs/zh/tdx.md](docs/zh/tdx.md)               |
+| iTrustee 路径（claims、evidence schema、测试步骤） | [docs/zh/itrustee.md](docs/zh/itrustee.md)     |
+| VirtCCA 路径（claims、evidence schema、测试步骤）  | [docs/zh/virtcca.md](docs/zh/virtcca.md)       |
 | hydra 子模块（电路、shrubs、setup）        | [docs/zh/hydra.md](docs/zh/hydra.md)           |
 
 

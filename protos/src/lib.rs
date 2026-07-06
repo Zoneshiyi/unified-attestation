@@ -1,6 +1,7 @@
-//! gRPC 协议契约。tonic-build 在编译期生成代码。
+//! gRPC protocol contract. tonic-build generates code at compile time.
 //!
-//! 三方共享：attester 用 server 实现 AttesterService，verifier 用 server 实现
-//! VerifierService，relying-party 同时作为两者的 client。
+//! Shared across three parties: attester uses server to implement AttesterService,
+//! verifier uses server to implement VerifierService, and the relying-party acts
+//! as a client to both.
 
 tonic::include_proto!("unified_attestation");

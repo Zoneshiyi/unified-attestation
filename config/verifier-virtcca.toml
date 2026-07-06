@@ -9,5 +9,5 @@ trusted_component_hashes = []
 signing_key_path = "config/keys/ear_signing.pem"
 
 [policy.virtcca]
-# 可信 RIM 白名单（hex，空 = 跳过）
+# Trusted RIM whitelist (hex, empty = skip)
 trusted_rim_hex = []

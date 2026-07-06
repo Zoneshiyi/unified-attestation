@@ -11,7 +11,7 @@ ccatoken.workspace = true
 clap.workspace = true
 codicon = "3"
 csv-rs = { git = "https://github.com/openanolis/csv-rs", rev = "b67a07e", default-features = false, features = ["network"] }
-# host 端拉 TDX collateral：report feature 暴露 collateral::get_collateral
+# Host-side TDX collateral fetch: report feature exposes collateral::get_collateral
 dcap-qvl = { version = "0.3.6", default-features = false, features = ["std", "report"] }
 ear.workspace = true
 hex.workspace = true

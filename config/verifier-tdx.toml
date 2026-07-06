@@ -13,8 +13,8 @@ trusted_component_hashes = [
 signing_key_path = "config/keys/ear_signing.pem"
 
 # TDX policy：
-# - pccs_url：verifier host 端按 fmspc 拉 collateral，默认 Intel 公网，可改内网 PCCS
-# - trusted_*_hex 留空 = 仅做 wasm 内完整链验签 + nonce 绑定，不做 measurement 比对（demo）
+# - pccs_url: verifier host fetches collateral by fmspc. Default is Intel public network; change to internal PCCS.
+# - trusted_*_hex left empty = full chain verification in wasm + nonce binding only, no measurement comparison (demo)
 [policy.tdx]
 pccs_url = "https://api.trustedservices.intel.com"
 trusted_mr_td_hex = []

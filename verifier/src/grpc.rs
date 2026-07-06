@@ -1,4 +1,13 @@
-//! tonic gRPC 实现：VerifierService.Verify。
+//! tonic gRPC implementation: VerifierService.Verify.
+//!
+//! Verify request processing has 6 steps:
+//! 1. Parse / register wasm component (sha256 whitelist validation)
+//! 2. Host-side evidence processing (CCA/CSV chain verification, TDX collateral fetch,
+//!    iTrustee/VirtCCA field extraction)
+//! 3. wasm appraiser sandbox invocation (nonce binding + claims output)
+//! 4. Policy matching (trusted roots / RIM / mr_td / tcb_status whitelists)
+//! 5. EAR JWT issuance (ES256 signed, including dynamic trust_vector assignment)
+//! 6. Optional: publish device VC to chain after successful verification (blockchain feature)
 
 use crate::cca_native::CcaVerifier;
 use crate::config::{CcaPolicy, HydraZkPolicy, TdxPolicy};
@@ -16,6 +25,7 @@ use std::sync::Arc;
 use tonic::{Request, Response, Status};
 use tracing::{info, warn};
 
+/// Global state for the gRPC handler, assembled by main.rs and shared via Arc.
 pub struct AppState {
     pub host: Arc<WasmHost>,
     pub signing: SigningContext,
@@ -24,7 +34,7 @@ pub struct AppState {
     pub tdx_policy: TdxPolicy,
     pub cca_verifier: Option<CcaVerifier>,
     pub csv_verifier: Option<CsvVerifier>,
-    /// 可选：链上 VC 存储配置（需 `blockchain` feature）
+    /// Optional on-chain VC storage config (requires `blockchain` feature)
     #[cfg(feature = "blockchain")]
     pub chain_config: Option<hydra::device_vc::ChainConfig>,
 }
@@ -36,6 +46,8 @@ impl VerifierService for AppState {
         req: Request<VerifyRequest>,
     ) -> Result<Response<VerifyResponse>, Status> {
         let req = req.into_inner();
+
+        // Validate tee_type and nonce before any processing
         let tee = TeeType::try_from(req.tee_type)
             .map_err(|_| Status::invalid_argument("invalid tee_type"))?;
         if matches!(tee, TeeType::Unspecified) {
@@ -45,7 +57,9 @@ impl VerifierService for AppState {
             return Err(Status::invalid_argument("nonce required"));
         }
 
-        // 1. 解析 / 加载 wasm 组件
+        // —— Step 1: parse / load wasm component ——
+        // First submission with wasm bytes → register (sha256 whitelist check).
+        // Subsequent reuse with stable component_id → skip registration.
         let component_id = match req.wasm {
             Some(Wasm::WasmComponent(bytes)) => self
                 .host
@@ -56,17 +70,24 @@ impl VerifierService for AppState {
             None => return Err(Status::invalid_argument("wasm required")),
         };
 
-        // 2. host 端 CCA / CSV / iTrustee / VirtCCA 证据处理 + 度量值注入 evidence JSON
-        //    CCA / CSV：完整链验签 + 度量值注入
-        //    iTrustee / VirtCCA：解析 evidence 提取字段注入（真验签需 .so / OpenSSL，部署时接入）
-        //    TDX：host 端按 fmspc 拉取 collateral 注入 evidence
+        // —— Step 2: host-side evidence processing + measurement injection ——
+        // CCA / CSV: full chain verification + measurement injection into evidence JSON.
+        //   No verifier configured (missing ta_store, csv disabled) → skip, wasm only.
+        // iTrustee / VirtCCA: parse evidence and inject extracted fields.
+        //   Full verification requires .so / OpenSSL — deploy when available.
+        // TDX: host fetches collateral by fmspc and injects into evidence JSON.
+        //
+        // Mutex stores CCA lifecycle across the if-let scope for use in step 5 trust_vector.
         let cca_platform_lifecycle: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
         let evidence_for_wasm = if matches!(tee, TeeType::Cca | TeeType::CcaHydra) {
+            // CCA: decode evidence JSON, run host verification if verifier configured
             let mut ev: serde_json::Value = serde_json::from_slice(&req.evidence)
                 .map_err(|e| Status::invalid_argument(format!("evidence json: {e}")))?;
             if let Some(verifier) = &self.cca_verifier {
+                // Extract and decode the base64-encoded CCA token from evidence
                 let cca_token = extract_b64_field(&req.evidence, "cca_token_b64")
                     .map_err(|e| Status::invalid_argument(format!("extract cca token: {e}")))?;
+                // CCA challenge must be 64 bytes (zero-padded nonce)
                 let mut padded = req.nonce.clone();
                 padded.resize(64, 0);
                 let result = verifier.verify(&cca_token, &padded).map_err(|e| {
@@ -76,15 +97,18 @@ impl VerifierService for AppState {
                 info!("cca host verify passed");
                 let obj = ev.as_object_mut()
                     .ok_or_else(|| Status::invalid_argument("evidence root must be object"))?;
+                // Inject extracted CCA measurements so wasm appraiser can passthrough
                 inject_cca_claims(obj, &result);
                 *cca_platform_lifecycle.lock().unwrap() = result.cca_platform_lifecycle.clone();
             }
             serde_json::to_vec(&ev)
                 .map_err(|e| Status::internal(format!("serialize evidence: {e}")))?
         } else if matches!(tee, TeeType::Csv | TeeType::CsvHydra) {
+            // CSV: decode evidence JSON, run host verification if csv_verifier configured
             let mut ev: serde_json::Value = serde_json::from_slice(&req.evidence)
                 .map_err(|e| Status::invalid_argument(format!("evidence json: {e}")))?;
             if let Some(verifier) = &self.csv_verifier {
+                // Extract the base64-encoded CSV evidence blob
                 let csv_evidence = extract_b64_field(&req.evidence, "csv_evidence_b64")
                     .map_err(|e| Status::invalid_argument(format!("extract csv evidence: {e}")))?;
                 let result = verifier
@@ -97,6 +121,7 @@ impl VerifierService for AppState {
             serde_json::to_vec(&ev)
                 .map_err(|e| Status::internal(format!("serialize evidence: {e}")))?
         } else if matches!(tee, TeeType::Itrustee) {
+            // iTrustee: parse report JSON to extract TA measurements, inject for wasm passthrough
             let mut ev: serde_json::Value = serde_json::from_slice(&req.evidence)
                 .map_err(|e| Status::invalid_argument(format!("evidence json: {e}")))?;
             match crate::itrustee_native::extract_claims(&req.evidence) {
@@ -105,11 +130,13 @@ impl VerifierService for AppState {
                         .ok_or_else(|| Status::invalid_argument("evidence root must be object"))?;
                     inject_itrustee_claims(obj, &result);
                 }
+                // If report parsing fails, proceed with raw evidence (wasm still does nonce binding)
                 Err(e) => warn!(error = %e, "itrustee claim extraction failed, proceeding with raw evidence"),
             }
             serde_json::to_vec(&ev)
                 .map_err(|e| Status::internal(format!("serialize evidence: {e}")))?
         } else if matches!(tee, TeeType::Virtcca) {
+            // VirtCCA: extract binary field sizes, inject for wasm passthrough
             let mut ev: serde_json::Value = serde_json::from_slice(&req.evidence)
                 .map_err(|e| Status::invalid_argument(format!("evidence json: {e}")))?;
             match crate::virtcca_native::extract_claims(&req.evidence) {
@@ -123,6 +150,7 @@ impl VerifierService for AppState {
             serde_json::to_vec(&ev)
                 .map_err(|e| Status::internal(format!("serialize evidence: {e}")))?
         } else if matches!(tee, TeeType::Tdx | TeeType::TdxHydra) {
+            // TDX: fetch collateral from PCCS by fmspc, inject into evidence for wasm dcap-qvl
             inject_tdx_collateral(&req.evidence, &self.tdx_policy.pccs_url)
                 .await
                 .map_err(|e| {
@@ -130,15 +158,16 @@ impl VerifierService for AppState {
                     Status::internal(format!("fetch collateral: {e}"))
                 })?
         } else {
+            // Mock: no host-side processing, pass evidence through as-is
             req.evidence.clone()
         };
 
         let cca_lifecycle = cca_platform_lifecycle.lock().unwrap().clone();
 
-        // 3. wasm appraiser
-        // expected_init 只取 trusted_mr_config_id_hex 列表里的"第一项"作为 init_data_hash 透传：
-        // wasm appraiser 对 init_data_hash 是 1:1 强等比对，多值候选无意义；
-        // 列表余项最终在下面 enforce_tdx_policy 的 mr_config_id 白名单里做 OR 匹配
+        // —— Step 3: wasm appraiser evaluation ——
+        // For TDX, pass the first trusted_mr_config_id_hex entry as expected_init_data_hash.
+        // The wasm appraiser does 1:1 strict equality on init_data_hash; multi-value candidates
+        // are meaningless here. Remaining entries are OR-matched in enforce_tdx_policy below.
         let expected_init = matches!(tee, TeeType::Tdx | TeeType::TdxHydra)
             .then(|| self.tdx_policy.trusted_mr_config_id_hex.first())
             .flatten()
@@ -157,7 +186,8 @@ impl VerifierService for AppState {
                 Status::invalid_argument(format!("evidence rejected: {e}"))
             })?;
 
-        // 4. policy
+        // —— Step 4: policy enforcement ——
+        // Cross-check: wasm must report the same tee_type as the request
         let tee_kind_str = tee_type_str(tee);
         let claim_tee = outcome
             .claims
@@ -171,8 +201,9 @@ impl VerifierService for AppState {
         }
 
         match tee {
-            // Mock / CSV / Itrustee / Virtcca：policy 匹配在 host 端已完成（或 wasm appraiser 自行处理），
-            // 此处不额外校验。Itrustee / Virtcca 的 native 验证依赖 .so 库，部署时按需接入。
+            // Mock / CSV / iTrustee / VirtCCA: policy already handled in host step,
+            // or wasm appraiser self-enforces. iTrustee/VirtCCA native verification
+            // requires .so libraries — deploy when available.
             TeeType::Unspecified | TeeType::Mock | TeeType::Csv | TeeType::Itrustee | TeeType::Virtcca => {}
             TeeType::Cca => {
                 enforce_cca_policy(&self.cca_policy, &outcome.claims).map_err(|e| {
@@ -181,12 +212,14 @@ impl VerifierService for AppState {
                 })?;
             }
             TeeType::CcaHydra => {
+                // CCA + hydra: enforce both CCA policy (RIM) and hydra policy (shrubs roots)
                 enforce_cca_policy(&self.cca_policy, &outcome.claims)
                     .map_err(|e| Status::invalid_argument(format!("cca-hydra: {e}")))?;
                 enforce_hydra_policy(&self.hydra_policy, &outcome.claims)
                     .map_err(|e| Status::invalid_argument(format!("cca-hydra: {e}")))?;
             }
             TeeType::CsvHydra => {
+                // CSV + hydra: CCA policy not applicable, enforce hydra only
                 enforce_hydra_policy(&self.hydra_policy, &outcome.claims)
                     .map_err(|e| Status::invalid_argument(format!("csv-hydra: {e}")))?;
             }
@@ -195,6 +228,7 @@ impl VerifierService for AppState {
                     .map_err(|e| Status::invalid_argument(format!("tdx: {e}")))?;
             }
             TeeType::TdxHydra => {
+                // TDX + hydra: enforce both TDX policy (measurements) and hydra policy (shrubs roots)
                 enforce_tdx_policy(&self.tdx_policy, &outcome.claims)
                     .map_err(|e| Status::invalid_argument(format!("tdx-hydra: {e}")))?;
                 enforce_hydra_policy(&self.hydra_policy, &outcome.claims)
@@ -202,15 +236,17 @@ impl VerifierService for AppState {
             }
         }
 
-        // 5. 签 EAR。eat_nonce 用 RP nonce 的 base64url no-pad 文本表示，便于 RP 文本比对。
+        // —— Step 5: sign EAR JWT ——
+        // eat_nonce uses base64url no-pad encoding of the RP nonce, enabling text comparison at the RP.
         let nonce_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&req.nonce);
         let nonce_bound = outcome.claims.get("nonce_bound").and_then(|v| v.as_bool()).unwrap_or(false);
         let tcb_status = outcome.claims.get("tcb_status").and_then(|v| v.as_str());
+        // Dynamic trust_vector: each TEE type has its own assignment rules
         let trust_vector = trust_vector_for(tee, nonce_bound, &cca_lifecycle, tcb_status);
         let claims = EarClaims {
             iss: "unified-attestation-verifier".to_string(),
             iat: now_secs(),
-            exp: Some(now_secs() + 3600),
+            exp: Some(now_secs() + 3600), // 1 hour expiry
             eat_nonce: nonce_b64,
             tee_type: tee_kind_str.to_string(),
             component_id: outcome.component_id.clone(),
@@ -227,11 +263,12 @@ impl VerifierService for AppState {
             .sign(claims)
             .map_err(|e| Status::internal(e.to_string()))?;
 
-        // 6. 可选：验证通过后将 device VC 发布到链上
+        // —— Step 6: optional blockchain device VC publication ——
         #[cfg(feature = "blockchain")]
         if let Some(ref chain_cfg) = self.chain_config {
             use hydra::device_vc;
             let now = chrono_iso_now();
+            // Hash the evidence for on-chain storage (immutable record of what was verified)
             let evidence_hash = {
                 let mut h = sha2::Sha256::new();
                 Digest::update(&mut h, &req.evidence);
@@ -245,6 +282,7 @@ impl VerifierService for AppState {
                 &now,
                 true,
             );
+            // Best-effort: don't fail the verification if chain publication fails
             match device_vc::publish_device_vc_to_chain(&record, chain_cfg) {
                 Ok(tx_hash) => info!(%tx_hash, "device VC published to chain"),
                 Err(e) => warn!(error = %e, "chain publish failed"),
@@ -258,7 +296,9 @@ impl VerifierService for AppState {
     }
 }
 
-/// `now()` 的 ISO 8601 字符串表示。
+/// ISO 8601 string representation of `now()`.
+///
+/// ponytail: manual date computation to avoid a chrono crate dependency.
 #[cfg(feature = "blockchain")]
 fn chrono_iso_now() -> String {
     use std::time::SystemTime;
@@ -266,9 +306,9 @@ fn chrono_iso_now() -> String {
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default();
     let secs = dur.as_secs();
-    // 简化：距 epoch 的天数 → 近似日期
+    // Days since epoch → approximate date
     let days = secs / 86400;
-    // 从 1970-01-01 开始计算
+    // Count forward from 1970-01-01
     let mut y = 1970i64;
     let mut remaining = days as i64;
     loop {
@@ -301,7 +341,7 @@ fn chrono_iso_now() -> String {
     format!("{y:04}-{m:02}-{:02}T00:00:00Z", remaining + 1)
 }
 
-/// 从 wasm 返回的 claims 中提取设备公钥（如有）。
+/// Extract the device public key from wasm-returned claims, if present.
 #[cfg(feature = "blockchain")]
 fn extract_pubkey_from_claims(claims: &serde_json::Value) -> Option<String> {
     claims
@@ -310,6 +350,7 @@ fn extract_pubkey_from_claims(claims: &serde_json::Value) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+/// Map TeeType proto enum to kebab-case string used in config and EAR claims.
 fn tee_type_str(t: TeeType) -> &'static str {
     match t {
         TeeType::Unspecified => "unspecified",
@@ -325,6 +366,7 @@ fn tee_type_str(t: TeeType) -> &'static str {
     }
 }
 
+/// Current Unix timestamp in seconds.
 fn now_secs() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -332,6 +374,7 @@ fn now_secs() -> i64 {
         .unwrap_or(0)
 }
 
+/// Extract and base64-decode a named string field from a JSON evidence byte slice.
 fn extract_b64_field(evidence: &[u8], key: &str) -> Result<Vec<u8>, String> {
     let v: serde_json::Value =
         serde_json::from_slice(evidence).map_err(|e| format!("evidence json: {e}"))?;
@@ -342,8 +385,11 @@ fn extract_b64_field(evidence: &[u8], key: &str) -> Result<Vec<u8>, String> {
     B64.decode(s).map_err(|e| format!("{key} base64: {e}"))
 }
 
-/// host 端按 fmspc 从 PCS/PCCS 拉 collateral，写回 evidence JSON。
-/// wasm appraiser 不感知拉取过程，拿到的 evidence 形态与"attester 拉"方案一致。
+/// Fetch TDX collateral from PCS/PCCS by fmspc and write it back into evidence JSON.
+///
+/// The wasm appraiser is unaware of the fetch process; the evidence it receives has the
+/// same shape as if the attester had fetched it. Injected fields: `collateral_b64`
+/// (QuoteCollateralV3 serialized then base64-encoded), `now_secs` (Unix seconds for dcap-qvl).
 async fn inject_tdx_collateral(evidence: &[u8], pccs_url: &str) -> Result<Vec<u8>, String> {
     let mut v: serde_json::Value =
         serde_json::from_slice(evidence).map_err(|e| format!("evidence json: {e}"))?;
@@ -351,6 +397,7 @@ async fn inject_tdx_collateral(evidence: &[u8], pccs_url: &str) -> Result<Vec<u8
         .as_object_mut()
         .ok_or_else(|| "evidence root must be object".to_string())?;
 
+    // Extract and decode quote bytes from evidence
     let quote_b64 = obj
         .get("quote_b64")
         .and_then(|x| x.as_str())
@@ -359,6 +406,7 @@ async fn inject_tdx_collateral(evidence: &[u8], pccs_url: &str) -> Result<Vec<u8
         .decode(quote_b64)
         .map_err(|e| format!("quote_b64 base64: {e}"))?;
 
+    // Fetch collateral from PCCS using dcap-qvl, then inject as base64
     let collateral = dcap_qvl::collateral::get_collateral(pccs_url, &quote_bytes)
         .await
         .map_err(|e| format!("get_collateral: {e}"))?;
@@ -376,18 +424,20 @@ async fn inject_tdx_collateral(evidence: &[u8], pccs_url: &str) -> Result<Vec<u8
     serde_json::to_vec(&v).map_err(|e| format!("serialize evidence: {e}"))
 }
 
+/// Enforce CCA policy: RIM whitelist + subject whitelist.
 fn enforce_cca_policy(policy: &CcaPolicy, claims: &serde_json::Value) -> Result<(), String> {
-    // RIM 比对
+    // RIM (Realm Initial Measurement) comparison
     if !policy.trusted_rim_hex.is_empty() {
         let rim = claims
             .get("cca_realm_initial_measurement")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "claims.cca_realm_initial_measurement missing".to_string())?;
+        // Case-insensitive hex comparison
         if !policy.trusted_rim_hex.iter().any(|s| s.eq_ignore_ascii_case(rim)) {
             return Err(format!("rim '{}' not in trusted list", rim));
         }
     }
-    // subject 比对（用于 cca-hydra 的设备实例白名单）
+    // Subject comparison (device instance whitelist for cca-hydra)
     if !policy.trusted_subjects.is_empty() {
         let subject = claims
             .get("subject")
@@ -403,8 +453,11 @@ fn enforce_cca_policy(policy: &CcaPolicy, claims: &serde_json::Value) -> Result<
     Ok(())
 }
 
-/// 将 CCA 验证结果注入 evidence JSON，供 wasm appraiser 透传。
-fn inject_cca_claims(obj: &mut serde_json::Map<String, serde_json::Value>, result: &crate::cca_native::CcaVerificationResult) {
+/// Inject CCA verification results into evidence JSON for wasm appraiser passthrough.
+fn inject_cca_claims(
+    obj: &mut serde_json::Map<String, serde_json::Value>,
+    result: &crate::cca_native::CcaVerificationResult,
+) {
     if let Some(ref v) = result.realm_initial_measurement {
         obj.insert("cca_realm_initial_measurement".into(), v.clone().into());
     }
@@ -425,8 +478,11 @@ fn inject_cca_claims(obj: &mut serde_json::Map<String, serde_json::Value>, resul
     }
 }
 
-/// 将 CSV 验证结果注入 evidence JSON，供 wasm appraiser 透传。
-fn inject_csv_claims(obj: &mut serde_json::Map<String, serde_json::Value>, result: &crate::csv_native::CsvVerificationResult) {
+/// Inject CSV verification results into evidence JSON for wasm appraiser passthrough.
+fn inject_csv_claims(
+    obj: &mut serde_json::Map<String, serde_json::Value>,
+    result: &crate::csv_native::CsvVerificationResult,
+) {
     if let Some(ref v) = result.chip_id {
         obj.insert("chip_id".into(), v.clone().into());
     }
@@ -444,7 +500,13 @@ fn inject_csv_claims(obj: &mut serde_json::Map<String, serde_json::Value>, resul
     }
 }
 
-/// 根据验证结果为不同 TEE 类型生成动态 Trust Vector。
+/// Generate a dynamic Trust Vector per verification result.
+///
+/// Assignment rules by TEE type:
+/// - TDX: executables follows tcb_status (UpToDate=2, SWHardeningNeeded=1, OutOfDate/Revoked=0)
+/// - CCA: instance_identity follows nonce_bound, configuration follows lifecycle
+/// - CSV: instance_identity follows nonce_bound
+/// - Others (mock, Itrustee, Virtcca): all affirming (2,2,2)
 fn trust_vector_for(
     tee: TeeType,
     nonce_bound: bool,
@@ -457,7 +519,7 @@ fn trust_vector_for(
                 Some("UpToDate") => 2,
                 Some("SWHardeningNeeded") | Some("ConfigurationAndSWHardeningNeeded") => 1,
                 Some("OutOfDate") | Some("Revoked") => 0,
-                _ => 1,
+                _ => 1, // unknown status → warning
             };
             TrustVector::new(2, 2, executables)
         }
@@ -466,7 +528,7 @@ fn trust_vector_for(
             let configuration = match cca_lifecycle.as_deref() {
                 Some("secured") | Some("secured_no_debug") => 2,
                 Some("not_secured") | Some("recoverable") => 1,
-                _ => 0,
+                _ => 0, // unknown lifecycle → none
             };
             TrustVector::new(instance_identity, configuration, 2)
         }
@@ -478,6 +540,10 @@ fn trust_vector_for(
     }
 }
 
+/// Verify that the wasm-returned shrubs root list matches the policy entry-by-entry.
+///
+/// Comparison: equal length + case-insensitive hex equality for each root.
+/// Empty policy → skip (demo only; must be configured in production).
 fn enforce_hydra_policy(policy: &HydraZkPolicy, claims: &serde_json::Value) -> Result<(), String> {
     if policy.trusted_roots_hex.is_empty() {
         warn!("hydra policy.trusted_roots_hex is empty; skipping whitelist binding");
@@ -491,6 +557,7 @@ fn enforce_hydra_policy(policy: &HydraZkPolicy, claims: &serde_json::Value) -> R
         .map(|v| v.as_str().unwrap_or(""))
         .collect();
 
+    // Length must match: the wasm returns exactly the roots used during proving
     if claimed.len() != policy.trusted_roots_hex.len() {
         return Err(format!(
             "roots_hex length mismatch: evidence={}, policy={}",
@@ -498,6 +565,7 @@ fn enforce_hydra_policy(policy: &HydraZkPolicy, claims: &serde_json::Value) -> R
             policy.trusted_roots_hex.len()
         ));
     }
+    // Per-root hex comparison
     for (i, (a, b)) in claimed
         .iter()
         .zip(policy.trusted_roots_hex.iter())
@@ -510,7 +578,7 @@ fn enforce_hydra_policy(policy: &HydraZkPolicy, claims: &serde_json::Value) -> R
     Ok(())
 }
 
-/// 将 iTrustee 验证结果注入 evidence JSON，供 wasm appraiser 透传。
+/// Inject iTrustee verification results into evidence JSON for wasm appraiser passthrough.
 fn inject_itrustee_claims(
     obj: &mut serde_json::Map<String, serde_json::Value>,
     result: &crate::itrustee_native::ItrusteeVerificationResult,
@@ -532,7 +600,7 @@ fn inject_itrustee_claims(
     }
 }
 
-/// 将 VirtCCA 验证结果注入 evidence JSON，供 wasm appraiser 透传。
+/// Inject VirtCCA verification results into evidence JSON for wasm appraiser passthrough.
 fn inject_virtcca_claims(
     obj: &mut serde_json::Map<String, serde_json::Value>,
     result: &crate::virtcca_native::VirtccaVerificationResult,
@@ -547,7 +615,12 @@ fn inject_virtcca_claims(
     }
 }
 
+/// Enforce TDX measurement whitelist policies.
+///
+/// Each trusted_*_hex list is independently checked: empty list → skip that field.
+/// `accept_tcb_status` controls acceptable TCB security levels.
 fn enforce_tdx_policy(policy: &TdxPolicy, claims: &serde_json::Value) -> Result<(), String> {
+    /// Single-field hex whitelist check: empty list → skip, otherwise must match.
     fn match_hex(claim: Option<&str>, list: &[String], field: &str) -> Result<(), String> {
         if list.is_empty() {
             return Ok(());
@@ -574,6 +647,7 @@ fn enforce_tdx_policy(policy: &TdxPolicy, claims: &serde_json::Value) -> Result<
         &policy.trusted_mr_config_id_hex,
         "mr_config_id",
     )?;
+    // TCB status check: must be in the accept list if list is non-empty
     if !policy.accept_tcb_status.is_empty() {
         let s = claims
             .get("tcb_status")

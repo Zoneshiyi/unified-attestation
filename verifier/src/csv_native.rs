@@ -1,10 +1,12 @@
-//! Host 端 Hygon CSV evidence 验签（参考 anolis-trustee deps/verifier/src/csv/mod.rs）。
+//! Host-side Hygon CSV evidence verification (ref: anolis-trustee deps/verifier/src/csv/mod.rs).
 //!
-//! csv-rs 用 openssl 跑 P-384 ECDSA + 链式验签，不能跨 wasm32-wasip1，
-//! 与 ccatoken 同位置：host 端验签，wasm appraiser 仅做字段透传与 nonce 比对。
+//! csv-rs uses OpenSSL for P-384 ECDSA + chain verification, cannot cross-compile to
+//! wasm32-wasip1. Same position as ccatoken: host-side verification, wasm appraiser only
+//! does field passthrough and nonce comparison.
 //!
-//! 链：HRK(self-signed) → HSK → CEK → PEK → TEE attestation report。
-//! HRK 内嵌（`verifier/assets/hygon_hrk.cert`），HSK/CEK 由 evidence 自带或现配 chip_id 在线拉取。
+//! Certificate chain: HRK(self-signed) → HSK → CEK → PEK → TEE attestation report.
+//! HRK is embedded (`verifier/assets/hygon_hrk.cert`). HSK/CEK are either bundled with
+//! the evidence or fetched online by chip_id.
 
 use crate::config::CsvPolicy;
 use anyhow::{Context, Result, anyhow, bail};
@@ -15,6 +17,7 @@ use serde::Deserialize;
 use std::io::Cursor;
 use tracing::info;
 
+/// Embedded Hygon Root Key certificate (self-signed, distributed with the verifier binary).
 const HRK: &[u8] = include_bytes!("../assets/hygon_hrk.cert");
 
 #[derive(Deserialize)]
@@ -37,17 +40,17 @@ struct CsvEvidenceJson {
     serial_number: Vec<u8>,
 }
 
-/// CSV 验证结果（含从 attestation report 中提取的度量值）。
+/// CSV verification result with measurements extracted from the attestation report.
 pub struct CsvVerificationResult {
-    /// 芯片 ID（serial_number trim 尾部 \0）
+    /// Chip ID (serial_number with trailing null bytes trimmed)
     pub chip_id: Option<String>,
-    /// 度量值（hex）
+    /// Measurement value (hex)
     pub measurement: Option<String>,
-    /// VM 版本号
+    /// VM firmware version (hex)
     pub vm_version: Option<String>,
-    /// 策略：是否禁止调试（0=false, 1=true）
+    /// Policy: debug disabled (0=false, 1=true)
     pub policy_nodbg: Option<u32>,
-    /// 策略：是否禁止密钥共享（0=false, 1=true）
+    /// Policy: key sharing disabled (0=false, 1=true)
     pub policy_noks: Option<u32>,
 }
 
@@ -56,6 +59,7 @@ pub struct CsvVerifier {
 }
 
 impl CsvVerifier {
+    /// Load the CSV verifier. Returns None if policy.csv.enabled is false.
     pub fn load(policy: &CsvPolicy) -> Option<Self> {
         if !policy.enabled {
             return None;
@@ -70,9 +74,10 @@ impl CsvVerifier {
         })
     }
 
-    /// 完整验：链证书（HRK→HSK→CEK→PEK→report）+ report_data nonce 绑定。
-    /// 返回结构化验证结果，含芯片 ID 与度量值。
+    /// Full verification: certificate chain (HRK→HSK→CEK→PEK→report) + report_data nonce binding.
+    /// Returns structured result with chip ID and measurements.
     pub fn verify(&self, evidence: &[u8], expected_report_data: &[u8]) -> Result<CsvVerificationResult> {
+        // Parse the evidence JSON envelope
         let parsed: CsvEvidenceJson =
             serde_json::from_slice(evidence).context("decode CSV evidence JSON")?;
 
@@ -83,6 +88,7 @@ impl CsvVerifier {
             .trim_end_matches('\0')
             .to_string();
 
+        // Resolve HSK/CEK: use evidence-bundled certs if available, otherwise load from cache/KDS
         let (hsk, cek, pek) = match parsed.cert_chain.hsk_cek {
             Some(h) => (h.hsk, h.cek, parsed.cert_chain.pek),
             None => {
@@ -98,22 +104,24 @@ impl CsvVerifier {
             }
         };
 
+        // Verify HRK→HSK→CEK→PEK→report chain
         verify_chain(&report, hsk, cek, pek)?;
 
-        // CSV attestation report 的 report_data 固定 64 字节，nonce(32B) 不足右补 0
+        // Nonce binding: CSV report_data is fixed 64 bytes. Nonce (≤32 bytes) is zero-padded.
         let mut expected = expected_report_data.to_vec();
         expected.resize(64, 0);
         if expected.as_slice() != report.tee_info().report_data() {
             bail!("CSV report_data does not match expected nonce");
         }
 
+        // Chip ID whitelist check
         if !self.policy.trusted_chip_ids.is_empty()
             && !self.policy.trusted_chip_ids.iter().any(|x| x == &chip_id)
         {
             bail!("CSV chip_id '{chip_id}' not in trusted list");
         }
 
-        // 提取度量值（注：csv-rs 的度量字段在 tee_info() 上）
+        // Extract measurements from the attestation report
         let tee = report.tee_info();
         let measure_bytes = tee.measure();
         let measurement = (!measure_bytes.is_empty()).then(|| hex::encode(&measure_bytes));
@@ -132,9 +140,9 @@ impl CsvVerifier {
         })
     }
 
-    /// 离线优先：<cert_dir>/hsk_cek/<chip_id>/hsk_cek.cert；
-    /// 否则 GET https://cert.hygon.cn/hsk_cek?snumber=<chip_id>。
-    /// ponytail: 同步 ureq，避免引入 reqwest+tokio runtime 复用问题。
+    /// Resolve HSK/CEK certificates: offline cache first, then online KDS if allowed.
+    ///
+    /// ponytail: synchronous ureq to avoid introducing reqwest + tokio runtime reuse issues.
     fn load_hsk_cek(&self, chip_id: &str) -> Result<Vec<u8>> {
         let local = self
             .policy
@@ -151,6 +159,7 @@ impl CsvVerifier {
                 local.display()
             );
         }
+        // Fetch from Hygon KDS online service
         let url = format!("https://cert.hygon.cn/hsk_cek?snumber={chip_id}");
         let resp = ureq::get(&url)
             .call()
@@ -162,6 +171,7 @@ impl CsvVerifier {
     }
 }
 
+/// Verify the full CSV certificate chain: HRK(self-sign) → HSK → CEK → PEK → report.
 fn verify_chain(
     report: &AttestationReport,
     hsk: ca::Certificate,
@@ -169,6 +179,7 @@ fn verify_chain(
     pek: csv::Certificate,
 ) -> Result<()> {
     let hrk = ca::Certificate::decode(&mut &HRK[..], ()).map_err(|e| anyhow!("decode HRK: {e}"))?;
+    // Chain verification: each link must be signed by the previous
     (&hrk, &hrk).verify().map_err(|e| anyhow!("HRK self-sign: {e}"))?;
     (&hrk, &hsk).verify().map_err(|e| anyhow!("HSK signed by HRK: {e}"))?;
     (&hsk, &cek).verify().map_err(|e| anyhow!("CEK signed by HSK: {e}"))?;

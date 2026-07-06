@@ -12,9 +12,9 @@ trusted_component_hashes = [
 [ear]
 signing_key_path = "config/keys/ear_signing.pem"
 
-# TDX + hydra 双层 policy。两层任一不满足都拒收。
-# trusted_*_hex 留空 → 仅做完整链验签 + nonce 绑定。
-# trusted_roots_hex 来源：cargo run -p hydra --example shrubs_roots
+# TDX + hydra dual-layer policy. Evidence is rejected if either layer fails.
+# trusted_*_hex left empty = chain verification + nonce binding only.
+# trusted_roots_hex source: cargo run -p hydra --example shrubs_roots
 [policy.tdx]
 pccs_url = "https://api.trustedservices.intel.com"
 trusted_mr_td_hex = []

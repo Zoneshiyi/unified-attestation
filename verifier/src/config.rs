@@ -1,16 +1,17 @@
-//! verifier 配置。
+//! Verifier configuration (TOML).
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
+/// Root verifier config, loaded from a TOML file.
 #[derive(Debug, Deserialize)]
 pub struct Config {
     pub listen: String,
     #[serde(default)]
     pub wasm: WasmConfig,
     pub ear: EarConfig,
-    /// 各 TEE 类型的 policy。缺省允许任意 root，供 demo 使用。
+    /// Per-TEE-type policies. Default (all empty) allows any measurement; demo only.
     #[serde(default)]
     pub policy: PolicyConfig,
 }
@@ -33,45 +34,45 @@ pub struct PolicyConfig {
 
 #[derive(Debug, Default, Deserialize)]
 pub struct HydraZkPolicy {
-    /// 可信 shrubs root 列表（小写 hex，每根 32 字节 / 64 字符）。
-    /// 非空时，wasm 组件返回的 `roots_hex` 必须按顺序逐一相等，否则 verifier 拒收。
-    /// 空表示不校验，仅 demo / 开发期使用。
+    /// Trusted shrubs root list (lowercase hex, 32 bytes / 64 chars per root).
+    /// When non-empty, the `roots_hex` returned by the wasm component must match
+    /// position-by-position; otherwise the verifier rejects. Empty = no check (demo only).
     #[serde(default)]
     pub trusted_roots_hex: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
 pub struct CcaPolicy {
-    /// ccatoken trust anchor store 路径（含 IAK 公钥等信任锚）。
-    /// 缺省时跳过 host 端验签，仅作 demo 用，不可用于生产。
+    /// ccatoken trust anchor store path (contains IAK public keys and other trust anchors).
+    /// When absent, host-side verification is skipped (demo only, not for production).
     #[serde(default)]
     pub ta_store: Option<PathBuf>,
-    /// ccatoken reference value store 路径（含 platform / realm 期望测量值）。
+    /// ccatoken reference value store path (contains platform/realm expected measurements).
     #[serde(default)]
     pub rv_store: Option<PathBuf>,
-    /// 可信 Realm 主体标识列表。非空时，verifier 比对 claims 中 `cca-realm-initial-measurement`
-    /// 是否命中此列表（小写 hex），用于业务级白名单。
+    /// Trusted realm subject list. When non-empty, the verifier checks claims
+    /// `cca_realm_initial_measurement` against this list (lowercase hex).
     #[serde(default)]
     pub trusted_subjects: Vec<String>,
-    /// 可信 Realm Initial Measurement 列表（hex）。非空时 wasm 组件返回的
-    /// `cca_realm_initial_measurement` 必须命中此列表。
+    /// Trusted Realm Initial Measurement list (hex). When non-empty, wasm-returned
+    /// `cca_realm_initial_measurement` must match an entry in this list.
     #[serde(default)]
     pub trusted_rim_hex: Vec<String>,
 }
 
-/// Hygon CSV policy。host 端 csv-rs 验签 + nonce 绑定。
+/// Hygon CSV policy: host-side csv-rs verification + nonce binding.
 #[derive(Debug, Deserialize)]
 pub struct CsvPolicy {
-    /// 是否启用 host 端验签。false 时整体跳过 CSV 验签（仅 demo / 联调）。
+    /// Whether to enable host-side verification. false → skip entirely (demo only).
     #[serde(default)]
     pub enabled: bool,
-    /// HSK/CEK 离线缓存目录，按 `<dir>/hsk_cek/<chip_id>/hsk_cek.cert` 查找。
+    /// HSK/CEK offline cache directory, searched as `<dir>/hsk_cek/<chip_id>/hsk_cek.cert`.
     #[serde(default = "default_csv_cert_dir")]
     pub cert_dir: PathBuf,
-    /// 离线缓存未命中时是否走在线 KDS（https://cert.hygon.cn/hsk_cek）拉取。
+    /// Whether to fetch from the online KDS (https://cert.hygon.cn/hsk_cek) on cache miss.
     #[serde(default)]
     pub allow_kds_fetch: bool,
-    /// 可信 chip_id 列表（serial_number 文本去尾零）。空表示不做 chip 白名单。
+    /// Trusted chip_id list (serial_number text, trailing nulls trimmed). Empty = no whitelist.
     #[serde(default)]
     pub trusted_chip_ids: Vec<String>,
 }
@@ -93,21 +94,21 @@ fn default_csv_cert_dir() -> PathBuf {
 
 #[derive(Debug, Deserialize)]
 pub struct TdxPolicy {
-    /// PCCS 或 Intel PCS URL，host 端按 fmspc 拉 collateral 用。默认走 Intel 公网。
+    /// PCCS or Intel PCS URL for host-side collateral fetch by fmspc. Defaults to Intel public.
     #[serde(default = "default_pccs_url")]
     pub pccs_url: String,
-    /// 可信 mr_td 列表（小写 hex，48 字节 / 96 字符）。
+    /// Trusted mr_td list (lowercase hex, 48 bytes / 96 chars).
     #[serde(default)]
     pub trusted_mr_td_hex: Vec<String>,
-    /// 可信 mr_seam（Intel 签名的 SEAM 模块测量）。
+    /// Trusted mr_seam (Intel-signed SEAM module measurement).
     #[serde(default)]
     pub trusted_mr_seam_hex: Vec<String>,
-    /// 可信 mr_config_id（init_data_hash），与 expected_init_data_hash 对应。
-    /// 非空时，wasm appraiser 收到的 expected_init_data_hash 也必须命中此列表。
+    /// Trusted mr_config_id (init_data_hash), corresponds to expected_init_data_hash.
+    /// When non-empty, the wasm appraiser's expected_init_data_hash must also match.
     #[serde(default)]
     pub trusted_mr_config_id_hex: Vec<String>,
-    /// 可接受的 TCB status，例如 ["UpToDate"] / ["UpToDate", "SwHardeningNeeded"]。
-    /// 空表示不校验，仅 demo 用。
+    /// Acceptable TCB status values, e.g. ["UpToDate"] / ["UpToDate", "SWHardeningNeeded"].
+    /// Empty = no check (demo only).
     #[serde(default)]
     pub accept_tcb_status: Vec<String>,
 }
@@ -128,36 +129,37 @@ fn default_pccs_url() -> String {
     "https://api.trustedservices.intel.com".to_string()
 }
 
-/// iTrustee policy（预留，native 验证依赖 libteeverifier.so）。
+/// iTrustee policy (reserved; native verification requires libteeverifier.so).
 #[derive(Debug, Default, Deserialize)]
 pub struct ItrusteePolicy {
-    /// 可信 TA UUID 列表。空表示跳过。
+    /// Trusted TA UUID list. Empty = skip.
     #[serde(default)]
     pub trusted_uuids: Vec<String>,
-    /// 可信 TA 度量值列表（hex）。空表示跳过。
+    /// Trusted TA measurement list (hex). Empty = skip.
     #[serde(default)]
     pub trusted_ta_img_hex: Vec<String>,
 }
 
-/// VirtCCA policy（预留，native 验证依赖 libvccaattestation.so + OpenSSL）。
+/// VirtCCA policy (reserved; native verification requires libvccaattestation.so + OpenSSL).
 #[derive(Debug, Default, Deserialize)]
 pub struct VirtccaPolicy {
-    /// 可信 RIM 列表（hex）。空表示跳过。
+    /// Trusted RIM list (hex). Empty = skip.
     #[serde(default)]
     pub trusted_rim_hex: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct WasmConfig {
-    /// 调试逃生通道：置 true 时 verifier 接受任意上传的 wasm 字节，仅供开发期使用。
-    /// 与 `trusted_component_hashes` 二选一：默认 false，必须配置至少一个 hash。
+    /// Debug escape hatch: when true, the verifier accepts any uploaded wasm bytes
+    /// (development only). Mutually exclusive with trusted_component_hashes: when false,
+    /// at least one hash must be configured.
     #[serde(default)]
     pub allow_unsigned: bool,
-    /// 已注册组件持久化目录。
+    /// Persistent directory for registered component binaries.
     #[serde(default = "default_components_dir")]
     pub registry_dir: PathBuf,
-    /// 受信任的组件 sha256（小写 hex）白名单。`allow_unsigned = false` 时，
-    /// 注册组件必须命中此列表，否则 verifier 拒绝加载。
+    /// Trusted component sha256 whitelist (lowercase hex). When allow_unsigned is false,
+    /// registered components must match an entry in this list.
     #[serde(default)]
     pub trusted_component_hashes: Vec<String>,
 }
@@ -174,7 +176,7 @@ impl Default for WasmConfig {
 
 #[derive(Debug, Deserialize)]
 pub struct EarConfig {
-    /// EAR JWT 签名私钥（PEM 格式）路径。算法固定 ES256。
+    /// EAR JWT signing private key path (PEM format). Algorithm is fixed to ES256.
     pub signing_key_path: PathBuf,
 }
 

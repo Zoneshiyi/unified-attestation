@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# 端到端跑通 mock 模式（gRPC 链路 + RP 触发）：
-#   1. 生成密钥对（首次运行）
-#   2. 编译 mock 组件
-#   3. 启动 verifier
-#   4. 启动 attester
-#   5. RP 触发完整流程并校验 EAR
+# End-to-end mock mode (gRPC chain + RP trigger):
+#   1. Generate key pair (first run)
+#   2. Build mock component
+#   3. Start verifier
+#   4. Start attester
+#   5. RP triggers full flow and validates EAR
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -21,7 +21,7 @@ cargo run -p attester -- --config config/attester.toml &
 ATTESTER_PID=$!
 trap 'kill $VERIFIER_PID $ATTESTER_PID 2>/dev/null || true' EXIT
 
-# 等服务起来
+# Wait for services to start
 sleep 3
 
 cargo run -p relying-party -- \

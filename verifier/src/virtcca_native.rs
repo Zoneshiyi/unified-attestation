@@ -1,19 +1,20 @@
-//! VirtCCA host 端 evidence 验证（预留）。
+//! VirtCCA host-side evidence verification (reserved).
 //!
-//! 完整验签依赖 OpenSSL + cose + ciborium（CBOR/COSE 解码 + HW 证书链验证）。
-//! 参考实现见 hydra/evidence-verify/src/virtcca/mod.rs。
-//! 部署环境中如有 libvccaattestation.so + OpenSSL，可在此接入：
-//!   1. CBOR Tag 399 解码 → CvmToken + PlatformToken
-//!   2. 设备证书链验证（Huawei Root CA → Sub CA → dev_cert）
-//!   3. CvmToken COSE-Sign1 验签 + challenge 绑定
-//!   4. 参考值比对（RIM）
+//! Full verification requires OpenSSL + cose + ciborium (CBOR/COSE decode + HW cert chain).
+//! Reference implementation: hydra/evidence-verify/src/virtcca/mod.rs.
+//! When libvccaattestation.so + OpenSSL are available in the deployment environment:
+//!   1. CBOR Tag 399 decode → CvmToken + PlatformToken
+//!   2. Device certificate chain verification (Huawei Root CA → Sub CA → dev_cert)
+//!   3. CvmToken COSE-Sign1 verification + challenge binding
+//!   4. Reference value comparison (RIM)
 //!
-//! 当前不做重签名验签，wasm appraiser 负责 nonce 绑定 + 字段透传。
+//! Currently no cryptographic verification; the wasm appraiser handles nonce binding
+//! and field passthrough.
 
 use anyhow::Result;
 use serde_json::Value;
 
-/// 从 VirtCCA evidence 中提取的元数据。
+/// Metadata extracted from VirtCCA evidence.
 #[derive(Debug, Default)]
 pub struct VirtccaVerificationResult {
     pub token_size: usize,
@@ -22,7 +23,13 @@ pub struct VirtccaVerificationResult {
     pub event_log_size: Option<usize>,
 }
 
-/// 解析 evidence JSON，提取二进制字段大小。
+/// Parse evidence JSON and extract binary field sizes.
+///
+/// Evidence fields:
+/// - `evidence`: CBOR/COSE token as JSON byte array
+/// - `dev_cert`: DER device certificate as JSON byte array
+/// - `ima_log`: optional IMA log as JSON byte array
+/// - `event_log`: optional event log (CCEL ACPI table) as JSON byte array
 pub fn extract_claims(evidence: &[u8]) -> Result<VirtccaVerificationResult> {
     let ev: Value = serde_json::from_slice(evidence)?;
     Ok(VirtccaVerificationResult {

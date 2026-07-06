@@ -16,8 +16,8 @@ members = [
     "appraisers/itrustee",
     "appraisers/virtcca",
 ]
-# `cargo build`（不带 -p / --workspace）只编 host 二进制；
-# wasm 组件由 `cargo component build -p <appraiser>` 显式编译。
+# `cargo build` (without -p / --workspace) compiles only host binaries;
+# wasm components are built explicitly via `cargo component build -p <appraiser>`.
 default-members = [
     "protos",
     "verifier",
@@ -58,13 +58,13 @@ wasmtime = { version = "41", features = ["component-model"] }
 wasmtime-wasi = "41"
 wit-bindgen = "0.46"
 
-# CCA host 端验签（rust-ccatoken 0.1 不发布到 crates.io）
+# CCA host-side signature verification (rust-ccatoken 0.1 not published to crates.io)
 ccatoken = { git = "https://github.com/veraison/rust-ccatoken", rev = "6d5b8db" }
-# TDX wasm 验签 + host 端解析 fmspc / 拉 collateral
+# TDX wasm signature verification + host-side fmspc parsing / collateral fetch
 dcap-qvl = { version = "0.3.6", default-features = false, features = ["std"] }
 chrono = { version = "0.4", default-features = false, features = ["serde", "now"] }
 
-# arkworks 0.5（hydra 用，host 与 wasm32-wasip1 共享）
+# arkworks 0.5 (used by hydra, shared between host and wasm32-wasip1)
 ark-bls12-381 = { version = "0.5", default-features = false, features = ["curve"] }
 ark-groth16   = { version = "0.5", default-features = false }
 ark-relations = { version = "0.5", default-features = false }

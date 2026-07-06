@@ -1,15 +1,17 @@
-//! Poseidon 配置 + native sponge 哈希
+//! Poseidon configuration and native sponge hashing
 //!
-//! 直接复用 `ark_crypto_primitives::sponge::poseidon::PoseidonSponge`，
-//! 仅暴露一组 BLS12-381 Fr 上的标准参数与 hash 便捷函数，避免外部传 `PoseidonConfig`。
+//! Directly wraps `ark_crypto_primitives::sponge::poseidon::PoseidonSponge`,
+//! exposing only a standard parameter set on BLS12-381 Fr plus convenience hash functions
+//! so callers never need to pass `PoseidonConfig`.
 //!
-//! 参数对齐 ark-crypto-primitives 0.5 的 `PoseidonDefaultConfigEntry::new(2, 17, 8, 31, 0)`
-//! （rate=2，optimized for constraints）：alpha=17、full_rounds=8、partial_rounds=31、capacity=1。
-//! ark / mds 由 `find_poseidon_ark_and_mds` 通过 Grain LFSR 现场推导，
-//! 与上游 `bls12_381_fr_poseidon_default_parameters_test` 测试用例输出一致。
+//! Parameters match ark-crypto-primitives 0.5's
+//! `PoseidonDefaultConfigEntry::new(2, 17, 8, 31, 0)`
+//! (rate=2, optimized for constraints): alpha=17, full_rounds=8, partial_rounds=31, capacity=1.
+//! The ark/mds matrices are derived on-the-fly via Grain LFSR by `find_poseidon_ark_and_mds`,
+//! producing output consistent with the upstream `bls12_381_fr_poseidon_default_parameters_test`.
 //!
-//! ark-bls12-381 0.5 自身没为 `Fr` 实现 `PoseidonDefaultConfig` trait，
-//! 所以这里走通用的 `find_poseidon_ark_and_mds` 入口，不依赖未存在的 trait 实现。
+//! ark-bls12-381 0.5 does not implement the `PoseidonDefaultConfig` trait for `Fr`,
+//! so we use the generic `find_poseidon_ark_and_mds` entry point instead.
 
 use ark_bls12_381::Fr;
 use ark_crypto_primitives::sponge::{
@@ -25,10 +27,12 @@ const FULL_ROUNDS: usize = 8;
 const PARTIAL_ROUNDS: usize = 31;
 const SKIP_MATRICES: u64 = 0;
 
-/// BLS12-381 Fr 上的标准 Poseidon 参数。
+/// Standard Poseidon parameters for BLS12-381 Fr.
 ///
-/// Grain LFSR 在毫秒级，对当前 attest/verify 频率不构成瓶颈，先不做缓存。
+/// Grain LFSR derivation takes microseconds — not a bottleneck at current attest/verify
+/// frequencies, so no caching is applied.
 pub fn default_config() -> PoseidonConfig<Fr> {
+    // Derive round constants (ark) and MDS matrix from the field modulus via Grain LFSR
     let (ark, mds) = find_poseidon_ark_and_mds::<Fr>(
         Fr::MODULUS_BIT_SIZE as u64,
         RATE,
@@ -47,6 +51,8 @@ pub fn default_config() -> PoseidonConfig<Fr> {
     }
 }
 
+/// Hash an arbitrary number of field elements by absorbing them sequentially
+/// into a fresh Poseidon sponge and squeezing one element.
 pub fn hash(inputs: &[Fr]) -> Fr {
     let cfg = default_config();
     let mut sponge: PoseidonSponge<Fr> = PoseidonSponge::new(&cfg);
@@ -56,7 +62,7 @@ pub fn hash(inputs: &[Fr]) -> Fr {
     sponge.squeeze_field_elements::<Fr>(1)[0]
 }
 
-/// 两元素 hash，shrubs tree 用得最多的接口。
+/// Two-element hash — the most common interface used by the shrubs tree.
 pub fn hash_pair(a: Fr, b: Fr) -> Fr {
     hash(&[a, b])
 }

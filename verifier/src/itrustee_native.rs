@@ -1,13 +1,14 @@
-//! iTrustee host 端 evidence 字段提取。
+//! iTrustee host-side evidence field extraction.
 //!
-//! 完整验签依赖 libteeverifier.so FFI，当前构建环境不包含该库。
-//! 本模块解析 report JSON 提取 TA 度量值，供 wasm appraiser 透传。
-//! 部署环境中如有 libteeverifier.so，可在此接入 FFI 验签（参考 hydra/evidence-verify）。
+//! Full verification requires libteeverifier.so FFI, which is not available in the build
+//! environment. This module parses the report JSON to extract TA measurements for wasm
+//! appraiser passthrough. When libteeverifier.so is available in the deployment environment,
+//! the FFI verification path can be wired in here (ref: hydra/evidence-verify).
 
 use anyhow::{Context, Result};
 use serde_json::Value;
 
-/// 从 iTrustee evidence 中提取的 TA 度量值。
+/// TA measurements extracted from iTrustee evidence.
 #[derive(Debug, Default)]
 pub struct ItrusteeVerificationResult {
     pub uuid: Option<String>,
@@ -17,14 +18,14 @@ pub struct ItrusteeVerificationResult {
     pub version: Option<String>,
 }
 
-/// 解析 evidence JSON，从 report 字段中提取 payload 信息。
+/// Parse evidence JSON and extract payload fields from the embedded report.
 ///
-/// evidence 格式（attester 封装后）：
+/// Evidence format (after attester wrapping):
 /// ```json
 /// { "report": "<JSON string>", "nonce": "...", "ima_log": null }
 /// ```
 ///
-/// report JSON 格式（iTrustee SDK 返回值）：
+/// Report JSON format (iTrustee SDK return value):
 /// ```json
 /// { "payload": { "uuid": "...", "ta_img": "...", "ta_mem": "...", ... } }
 /// ```

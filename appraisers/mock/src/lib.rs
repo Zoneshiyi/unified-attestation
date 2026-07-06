@@ -1,9 +1,10 @@
-//! Mock 验证组件。打通 host ↔ component 链路用，不做真实校验。
+//! Mock verification component. Used to verify the host <-> component
+//! communication path; does not perform real validation.
 //!
-//! 行为：
-//! - 解析 evidence JSON，提取若干字段
-//! - 把 expected_report_data 原样转发到 claims 中
-//! - 永远返回 verification = passed
+//! Behavior:
+//! - Parses the evidence JSON and extracts select fields
+//! - Forwards expected_report_data as-is into claims
+//! - Always returns verification = passed
 
 use base64::Engine;
 use serde::Deserialize;
@@ -25,6 +26,7 @@ struct MockEvidence {
 }
 
 fn evaluate_impl(evidence: Vec<u8>, expected_report_data: Option<Vec<u8>>) -> String {
+    // Parse the evidence JSON into a MockEvidence struct.
     let parsed: MockEvidence = match serde_json::from_slice(&evidence) {
         Ok(v) => v,
         Err(e) => {
@@ -32,11 +34,13 @@ fn evaluate_impl(evidence: Vec<u8>, expected_report_data: Option<Vec<u8>>) -> St
         }
     };
 
+    // Encode expected_report_data as standard base64 for diagnostics in claims.
     let challenge_b64 = expected_report_data
         .as_deref()
         .map(|b| base64::engine::general_purpose::STANDARD.encode(b))
         .unwrap_or_default();
 
+    // Always returns "passed" — mock only.
     json!({
         "tee_type": "mock",
         "verification": "passed",
@@ -66,6 +70,7 @@ impl GuestVerifier for Verifier {
         expected_report_data: OptionalData,
         _expected_init_data_hash: OptionalData,
     ) -> String {
+        // Convert OptionalData enum to Option<Vec<u8>> for easier handling.
         let expected_report_data = match expected_report_data {
             OptionalData::Value(v) => Some(v),
             OptionalData::NotProvided => None,

@@ -1,7 +1,8 @@
-//! 设备 VC 链上存储与查询。
+//! On-chain device VC storage and querying.
 //!
-//! 通过 EVM 兼容链上的 DeviceVCRecord 合约实现设备可验证凭证的去中心化存储。
-//! 链交互通过 `cast` CLI（Foundry 工具链）完成，不引入 Rust 区块链 SDK 依赖。
+//! Decentralized storage of device verifiable credentials via the DeviceVCRecord contract
+//! on an EVM-compatible chain. Chain interaction uses the `cast` CLI (Foundry toolchain)
+//! rather than pulling in a Rust blockchain SDK dependency.
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -10,20 +11,20 @@ use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::process::Command;
 
-// ── 常量 ────────────────────────────────────────────────────────────
+// ── Constants ────────────────────────────────────────────────────────────
 
-/// VC 信任有效期（天）。
+/// VC trust validity period (days).
 pub const TRUST_TTL_DAYS: i64 = 10;
 
-/// 本地 VC 缓存文件名。
+/// Local VC cache filename.
 pub const DEVICE_VC_CACHE_FILE: &str = "device_vc_cache.json";
 
-/// 链标识符，用于构造 DID `did:chain:<network>:<pubkey_hash>`。
+/// Chain identifier used to construct DIDs: `did:chain:<network>:<pubkey_hash>`.
 pub const DEFAULT_NETWORK: &str = "evm";
 
-// ── 配置 ────────────────────────────────────────────────────────────
+// ── Configuration ────────────────────────────────────────────────────────
 
-/// EVM 链配置。从环境变量读取。
+/// EVM chain configuration, read from environment variables.
 #[derive(Debug, Clone)]
 pub struct ChainConfig {
     pub rpc_url: String,
@@ -32,6 +33,7 @@ pub struct ChainConfig {
 }
 
 impl ChainConfig {
+    /// Build config from environment variables. Fails with context if any var is missing.
     pub fn from_env() -> Result<Self> {
         Ok(Self {
             rpc_url: std::env::var("CHAIN_RPC_URL")
@@ -44,9 +46,9 @@ impl ChainConfig {
     }
 }
 
-// ── 数据结构 ────────────────────────────────────────────────────────
+// ── Data structures ──────────────────────────────────────────────────────
 
-/// 设备信任状态。
+/// Device trust status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DeviceStatus {
     Trusted,
@@ -54,44 +56,45 @@ pub enum DeviceStatus {
     Expired,
 }
 
-/// VC 元数据。
+/// VC metadata for a single device.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceVCInfor {
-    /// 设备 DID，格式 `did:chain:<network>:0x<sha256(pubkey)>`
+    /// Device DID, format: `did:chain:<network>:0x<sha256(pubkey)>`
     pub device_did: String,
-    /// 设备公钥 hex（compressed secp256k1）
+    /// Device public key hex (compressed secp256k1)
     pub device_pubkey: String,
-    /// 信任状态
+    /// Trust status
     pub status: DeviceStatus,
-    /// evidence 的 sha256 hex
+    /// SHA-256 hex digest of the evidence
     pub evidence_hash: String,
-    /// 有效期截止时间（ISO 8601）
+    /// Expiry time (ISO 8601)
     pub period: String,
 }
 
-/// 完整 VC 记录（本地缓存 + 链上交互用）。
+/// Full VC record used for local caching and chain interaction.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceVCRecord {
-    /// sha256(device_pubkey_bytes) 的 hex
+    /// Hex-encoded sha256(device_pubkey_bytes)
     pub device_pubkey_hash: String,
-    /// VC 元数据
+    /// VC metadata
     pub vc_info: DeviceVCInfor,
-    /// W3C DID Document（JSON）
+    /// W3C DID Document (JSON)
     pub did_document: Value,
-    /// W3C Verifiable Credential（JSON）
+    /// W3C Verifiable Credential (JSON)
     pub verifiable_credential: Value,
-    /// 上链返回的交易 hash（32 字节 hex，`0x` 前缀）
+    /// Transaction hash returned from on-chain publish (32-byte hex, `0x`-prefixed)
     #[serde(default)]
     pub chain_tx_hash: Option<String>,
 }
 
-/// 本地 VC 缓存。
+/// Local VC cache persisted to disk.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct DeviceVCCache {
     pub devices: Vec<DeviceVCRecord>,
 }
 
 impl DeviceVCCache {
+    /// Load the cache from disk, or return an empty default if the file does not exist.
     pub fn load_or_default(path: &Path) -> Result<Self> {
         if !path.exists() {
             return Ok(Self::default());
@@ -101,13 +104,15 @@ impl DeviceVCCache {
         serde_json::from_str(&raw).with_context(|| format!("parse {}", path.display()))
     }
 
+    /// Write the cache to disk as pretty-printed JSON.
     pub fn save(&self, path: &Path) -> Result<()> {
         let raw = serde_json::to_string_pretty(self).context("serialize cache")?;
         std::fs::write(path, &raw).with_context(|| format!("write {}", path.display()))
     }
 
-    /// 插入或更新设备记录（按 pubkey_hash 去重）。
+    /// Insert or update a device record (deduplicated by pubkey_hash).
     pub fn upsert(&mut self, record: DeviceVCRecord) {
+        // Find existing record by pubkey_hash; replace if found, push otherwise
         if let Some(existing) = self
             .devices
             .iter_mut()
@@ -119,10 +124,12 @@ impl DeviceVCCache {
         }
     }
 
-    /// 将超过 period 的 Trusted 记录标记为 Expired，返回被标记的列表。
+    /// Mark all Trusted records whose period has passed as Expired.
+    /// Returns the list of records that were expired.
     pub fn expire_trusted(&mut self, now_iso: &str) -> Vec<DeviceVCRecord> {
         let mut expired = Vec::new();
         for r in &mut self.devices {
+            // Compare ISO 8601 strings lexicographically: "2026-01-15T00:00:00Z" <= now means expired
             if matches!(r.vc_info.status, DeviceStatus::Trusted) && r.vc_info.period.as_str() <= now_iso {
                 r.vc_info.status = DeviceStatus::Expired;
                 expired.push(r.clone());
@@ -132,18 +139,20 @@ impl DeviceVCCache {
     }
 }
 
-// ── 链交互（通过 cast CLI）──────────────────────────────────────────
+// ── Chain interaction (via cast CLI) ─────────────────────────────────────
 
-/// 将设备 VC 发布到链上 DeviceVCRecord 合约。
+/// Publish a device VC to the on-chain DeviceVCRecord contract.
 ///
-/// 等价于：`cast send $CONTRACT "storeVC(bytes32,string)" $HASH "$VC_JSON"`
-/// 返回交易 hash（`0x` 前缀 hex）。
+/// Equivalent to: `cast send $CONTRACT "storeVC(bytes32,string)" $HASH "$VC_JSON"`
+/// Returns the transaction hash (`0x`-prefixed hex).
 pub fn publish_device_vc_to_chain(
     record: &DeviceVCRecord,
     config: &ChainConfig,
 ) -> Result<String> {
+    // Serialize the VC JSON for the contract call
     let vc_json = serde_json::to_string(&record.verifiable_credential)
         .context("serialize vc")?;
+    // Ensure pubkey_hash is normalized to 0x-prefixed 32-byte hex
     let pubkey_hash = format!(
         "0x{}",
         record
@@ -155,6 +164,7 @@ pub fn publish_device_vc_to_chain(
         bail!("pubkey_hash must be 32 bytes hex, got {}", pubkey_hash.len());
     }
 
+    // Invoke cast send to call the contract's storeVC function
     let output = Command::new("cast")
         .args([
             "send",
@@ -176,6 +186,7 @@ pub fn publish_device_vc_to_chain(
         bail!("cast send failed: {stderr}");
     }
 
+    // Parse the JSON output to extract transactionHash
     let result: Value =
         serde_json::from_slice(&output.stdout).context("parse cast output")?;
     let tx_hash = result["transactionHash"]
@@ -184,19 +195,21 @@ pub fn publish_device_vc_to_chain(
     Ok(tx_hash.to_string())
 }
 
-/// 从链上 DeviceVCRecord 合约查询设备的最新 VC。
+/// Query the latest VC for a device from the on-chain DeviceVCRecord contract.
 ///
-/// 等价于：`cast call $CONTRACT "getVC(bytes32)" $HASH`
-/// 返回 (vcJson, timestamp) 元组。
+/// Equivalent to: `cast call $CONTRACT "getVC(bytes32)" $HASH`
+/// Returns (vcJson, timestamp) as a parsed JSON value.
 pub fn query_device_vc_from_chain(
     device_pubkey: &str,
     config: &ChainConfig,
 ) -> Result<Value> {
+    // Compute the pubkey hash from the raw public key bytes
     let pubkey_bytes =
         hex::decode(device_pubkey).context("decode device_pubkey hex")?;
     let pubkey_hash = public_key_hash_hex(&pubkey_bytes);
     let hash_arg = format!("0x{pubkey_hash}");
 
+    // Call the contract's getVC view function
     let output = Command::new("cast")
         .args([
             "call",
@@ -214,11 +227,11 @@ pub fn query_device_vc_from_chain(
         bail!("cast call failed: {stderr}");
     }
 
-    // cast call 返回 ABI 编码的 (string, uint256)
-    // 用 cast --abi-decode 解出 vc_json
+    // cast call returns ABI-encoded (string, uint256); decode with cast abi-decode
     let raw = String::from_utf8(output.stdout).context("cast output not utf-8")?;
     let raw = raw.trim();
 
+    // Empty result (0x or blank) means no VC stored yet
     if raw == "0x" || raw.is_empty() {
         return Ok(Value::Null);
     }
@@ -233,19 +246,19 @@ pub fn query_device_vc_from_chain(
         .context("spawn cast abi-decode")?;
 
     if !decode_output.status.success() {
-        // 可能返回空值 (0x0...0)
+        // May return zero-value encoding (0x0...0) when no record exists
         return Ok(Value::Null);
     }
 
     let decoded = String::from_utf8(decode_output.stdout).context("decode output not utf-8")?;
     let decoded = decoded.trim();
 
-    // 输出格式: ["<vc_json>", <timestamp>] 或 ["", 0]
+    // Output format: ["<vc_json>", <timestamp>] or ["", 0]
     if decoded.starts_with("[\"\"") || decoded == "[]" {
         return Ok(Value::Null);
     }
 
-    // 提取第一个字符串参数（vc_json）
+    // Extract the first string argument (vc_json) from the decoded array
     let v: Value = serde_json::from_str(decoded).context("parse abi-decode output")?;
     let vc_str = v[0].as_str().unwrap_or("");
     if vc_str.is_empty() {
@@ -254,9 +267,12 @@ pub fn query_device_vc_from_chain(
     serde_json::from_str(vc_str).context("parse vc json from chain")
 }
 
-// ── VC 构造 ─────────────────────────────────────────────────────────
+// ── VC construction ──────────────────────────────────────────────────────
 
-/// 构造 background-check VC 记录。
+/// Build a background-check VC record for a device.
+///
+/// If `has_evidence` is true, the device is marked Trusted with a future expiry;
+/// otherwise it is Untrusted with the current timestamp as period.
 pub fn build_background_check_record(
     device_pubkey: &str,
     evidence_hash: &str,
@@ -268,12 +284,14 @@ pub fn build_background_check_record(
     let pubkey_hash = public_key_hash_hex(&pubkey_bytes);
     let device_did = format!("did:chain:{network}:0x{pubkey_hash}");
 
+    // Set expiry: TRUST_TTL_DAYS from now if trusted, otherwise immediate
     let period = if has_evidence {
         chrono_iso(now_iso, TRUST_TTL_DAYS)
     } else {
         now_iso.to_string()
     };
 
+    // Determine initial status from evidence presence
     let vc_info = DeviceVCInfor {
         device_did: device_did.clone(),
         device_pubkey: device_pubkey.to_string(),
@@ -286,6 +304,7 @@ pub fn build_background_check_record(
         period,
     };
 
+    // Build the W3C DID document and VC from the metadata
     let verifier_did = format!("did:chain:{network}:verifier");
     let vc = build_device_vc(&verifier_did, &vc_info);
     let did_doc = build_device_did_document(network, &pubkey_hash, &device_did);
@@ -299,15 +318,16 @@ pub fn build_background_check_record(
     }
 }
 
-// ── 辅助函数 ────────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────
 
-/// sha256(device_pubkey_bytes) → hex
+/// Compute sha256(public_key_bytes) and return as lowercase hex.
 pub fn public_key_hash_hex(public_key_bytes: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(public_key_bytes);
     hex::encode(h.finalize())
 }
 
+/// Build a W3C Verifiable Credential JSON object for a device.
 fn build_device_vc(issuer_did: &str, info: &DeviceVCInfor) -> Value {
     serde_json::json!({
         "@context": [
@@ -330,6 +350,7 @@ fn build_device_vc(issuer_did: &str, info: &DeviceVCInfor) -> Value {
     })
 }
 
+/// Build a W3C DID Document JSON object for a device.
 fn build_device_did_document(network: &str, pubkey_hash: &str, device_did: &str) -> Value {
     serde_json::json!({
         "@context": "https://www.w3.org/ns/did/v1",
@@ -344,9 +365,12 @@ fn build_device_did_document(network: &str, pubkey_hash: &str, device_did: &str)
     })
 }
 
-/// 日期偏移（天）。ponytail: 不引入 chrono crate，直接做 ISO 日期加减。
+/// Offset an ISO 8601 date string by a number of days.
+///
+/// ponytail: manual ISO date arithmetic instead of pulling in the chrono crate.
+/// Handles "2026-01-15T00:00:00Z" and "2026-01-15" formats.
 fn chrono_iso(now_iso: &str, add_days: i64) -> String {
-    // 解析 "2026-01-15T00:00:00Z" 或 "2026-01-15" 格式
+    // Extract the date part before any 'T' separator
     let date_part = now_iso.split('T').next().unwrap_or(now_iso);
     let parts: Vec<&str> = date_part.split('-').collect();
     if parts.len() < 3 {
@@ -356,6 +380,7 @@ fn chrono_iso(now_iso: &str, add_days: i64) -> String {
     let month: i64 = parts[1].parse().unwrap_or(0);
     let day: i64 = parts[2].parse().unwrap_or(0);
 
+    // Closure to compute days in a given month, accounting for leap years
     let days_in_month = |m: i64, y: i64| -> i64 {
         match m {
             1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
@@ -371,6 +396,7 @@ fn chrono_iso(now_iso: &str, add_days: i64) -> String {
         }
     };
 
+    // Add days, carrying overflow into months and years
     let mut d = day + add_days;
     let mut m = month;
     let mut y = year;

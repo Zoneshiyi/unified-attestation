@@ -1,8 +1,8 @@
-//! Groth16 verify 包装
+//! Groth16 verify wrapper
 //!
-//! 给 wasm 验证组件用。设计目标：
-//! - 输入是字节流（VK / proof / public input），不直接暴露 ark 类型
-//! - 错误用 `&'static str` 携带，避免给调用方塞 ark 错误类型
+//! Designed for the wasm verifier component. Goals:
+//! - Inputs are byte streams (VK / proof / public inputs), never expose raw ark types
+//! - Errors carried as `&'static str` so callers don't pull in ark error types
 
 use alloc::vec::Vec;
 use ark_bls12_381::{Bls12_381, Fr};
@@ -10,26 +10,34 @@ use ark_groth16::{Groth16, Proof, VerifyingKey};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_snark::SNARK;
 
+/// Deserialize verifying key and proof from compressed bytes, process the VK,
+/// and run Groth16 verification against the given public inputs.
 pub fn verify_groth16(
     vk_bytes: &[u8],
     proof_bytes: &[u8],
     public_inputs: &[Fr],
 ) -> Result<bool, &'static str> {
+    // Deserialize verifying key and proof from compressed byte streams
     let vk = VerifyingKey::<Bls12_381>::deserialize_compressed(vk_bytes)
         .map_err(|_| "invalid verifying key")?;
     let proof =
         Proof::<Bls12_381>::deserialize_compressed(proof_bytes).map_err(|_| "invalid proof")?;
+    // Process the VK into a prepared form for faster verification
     let pvk = Groth16::<Bls12_381>::process_vk(&vk).map_err(|_| "process_vk failed")?;
+    // Run the actual verification
     Groth16::<Bls12_381>::verify_with_processed_vk(&pvk, public_inputs, &proof)
         .map_err(|_| "verify failed")
 }
 
-/// 反序列化 public input 字段元素列表（每元素 32 字节，compressed）
+/// Deserialize public input field elements from a flat byte stream.
+/// Each element is 32 bytes, compressed canonical representation.
 pub fn decode_public_inputs(bytes: &[u8]) -> Result<Vec<Fr>, &'static str> {
+    // Input must be a multiple of 32 bytes (one Fr element each)
     if !bytes.len().is_multiple_of(32) {
         return Err("public inputs not 32-byte aligned");
     }
     let mut out = Vec::with_capacity(bytes.len() / 32);
+    // Deserialize each 32-byte chunk as a compressed Fr element
     for chunk in bytes.chunks(32) {
         let fr = Fr::deserialize_compressed(chunk).map_err(|_| "invalid field element")?;
         out.push(fr);
@@ -37,8 +45,9 @@ pub fn decode_public_inputs(bytes: &[u8]) -> Result<Vec<Fr>, &'static str> {
     Ok(out)
 }
 
-/// 把 Fr 序列化为 32 字节 compressed 字节流。失败时返回长度 0 的 vec——
-/// 仅用于 wasm 组件回填 claims 这一类"序列化必然成功"的场景，避免外露 ark 错误类型。
+/// Serialize an Fr element to 32-byte compressed bytes.
+/// Returns an empty vec on failure — used only in wasm claim backfill scenarios where
+/// serialization is virtually guaranteed to succeed, avoiding ark error type leakage.
 pub fn fr_to_bytes(fr: &Fr) -> Vec<u8> {
     let mut buf = Vec::with_capacity(32);
     let _ = fr.serialize_compressed(&mut buf);

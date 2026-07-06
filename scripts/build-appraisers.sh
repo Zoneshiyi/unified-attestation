@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# 用 cargo-component 编译所有 appraiser 到 wasm component（target/wasm32-wasip1/release/）。
+# Build all appraisers to wasm components with cargo-component (target/wasm32-wasip1/release/).
 #
-# 安装 cargo-component：cargo install cargo-component --locked
+# Install cargo-component: cargo install cargo-component --locked
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 if ! command -v cargo-component >/dev/null 2>&1; then
-  echo "需要先安装 cargo-component：cargo install cargo-component --locked"
+  echo "cargo-component is required: cargo install cargo-component --locked"
   exit 1
 fi
 

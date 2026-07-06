@@ -1,13 +1,15 @@
-//! 算 shrubs whitelist 的 trusted root 列表（小写 hex），
-//! 同时打印 self_index 是否落在 shrubs root 边界（落在边界则没法走 path 校验分支）。
+//! Compute the trusted root list (lowercase hex) for the shrubs whitelist,
+//! and report whether each self_index lands on a shrubs root boundary
+//! (boundary positions cannot walk a Merkle path for verification).
 //!
-//! 用法：cargo run -p hydra --example shrubs_roots
+//! Usage: cargo run -p hydra --example shrubs_roots
 //!
-//! 设备列表与 attester-cca-zk.toml 中的 [zk.whitelist.devices] 严格保持一致。
+//! The device list must exactly match [zk.whitelist.devices] in attester-cca-zk.toml.
 
 use ark_serialize::CanonicalSerialize;
 use hydra::{Fr, poseidon, shrubs_tree};
 
+/// Convert bytes to lowercase hex string.
 fn hex_lower(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len() * 2);
     for b in bytes {
@@ -17,13 +19,15 @@ fn hex_lower(bytes: &[u8]) -> String {
 }
 
 fn main() {
-    // 与 config/attester-cca-zk.toml 中的设备列表严格保持一致
+    // Must exactly match the device list in config/attester-cca-zk.toml
     let devices: [(u64, u64, u64); 4] = [
         (100, 200, 300),
         (101, 201, 301),
         (102, 202, 302),
         (103, 203, 303),
     ];
+
+    // Compute leaf = H(H(ar, sk), pk) for each device
     let leaves: Vec<Fr> = devices
         .iter()
         .map(|(pk, sk, ar)| {
@@ -34,6 +38,7 @@ fn main() {
         })
         .collect();
 
+    // Build the shrubs accumulator roots from the leaf set
     let mut roots = Vec::new();
     shrubs_tree::create_batch_devices(&mut roots, &leaves);
 
@@ -48,7 +53,7 @@ fn main() {
     }
     println!("]");
 
-    // 顺手提示哪些 self_index 没法走 path（留给配置者参考）
+    // Annotate which self_index values have a usable Merkle path vs. sit on a boundary
     println!();
     for i in 0..devices.len() {
         let path = shrubs_tree::find_shrubs_path(&roots, &leaves, 0, i);

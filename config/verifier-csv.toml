@@ -11,14 +11,14 @@ trusted_component_hashes = [
 [ear]
 signing_key_path = "config/keys/ear_signing.pem"
 
-# Hygon CSV：host 端做 csv-rs 链验签 + chip_id 白名单。
-# enabled=false 时整体跳过验签（仅 demo / 联调，生产必须 true）。
-[policy.csv]
+# Hygon CSV: host-side csv-rs chain verification + chip_id whitelist.
+# Hygon CSV: host-side csv-rs chain verification + chip_id whitelist.
+# enabled=false skips verification entirely (demo/debug only; must be true in production).
 enabled = true
-# HSK/CEK 离线缓存目录；evidence 不携带 hsk_cek 时按 <cert_dir>/hsk_cek/<chip_id>/hsk_cek.cert 找。
-# 为空则用默认 /opt/hygon/csv。
+# HSK/CEK offline cache directory; when evidence has no hsk_cek, looks up <cert_dir>/hsk_cek/<chip_id>/hsk_cek.cert.
+# Empty string defaults to /opt/hygon/csv.
 # cert_dir = "/opt/hygon/csv"
-# 离线缓存未命中时是否走 KDS 在线拉取（https://cert.hygon.cn/hsk_cek?snumber=<chip>）。
+# Whether to fetch from KDS online when offline cache misses (https://cert.hygon.cn/hsk_cek?snumber=<chip>).
 allow_kds_fetch = false
-# chip_id 白名单（serial_number 文本）。空 → 不做 chip 白名单。
+# chip_id whitelist (serial_number text). Empty = no chip whitelist enforcement.
 trusted_chip_ids = []

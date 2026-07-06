@@ -1,29 +1,32 @@
-//! iTrustee 验证组件
+//! iTrustee verification component.
 //!
-//! iTrustee 真验签依赖 native libteeverifier.so，wasm 内不做重签名验签。
-//! 本组件校验 nonce 绑定，从 report JSON 中提取 TA 度量值，并透传 host 端注入的验证结果。
+//! Real signature verification for iTrustee requires the native libteeverifier.so
+//! library. Re-signature verification is NOT performed inside wasm. This component
+//! validates nonce binding, extracts TA measurement values from the report JSON,
+//! and passes through verification results injected by the host.
 //!
-//! Evidence schema（attester 封装后）：
+//! Evidence schema (after attester wraps it):
 //! ```text
 //! {
-//!   "report": "<JSON 字符串，来自 iTrustee SDK RemoteAttest 返回值>",
+//!   "report": "<JSON string, from iTrustee SDK RemoteAttest return value>",
 //!   "nonce": "<base64url nonce>",
-//!   "ima_log": [<可选，IMA 日志字节数组>]
+//!   "ima_log": [<optional, IMA log byte array>]
 //! }
 //! ```
 //!
-//! host 端验证通过后会注入以下字段到 evidence JSON 根层：
-//! - `itrustee_uuid`：TA UUID
-//! - `itrustee_ta_img`：TA 镜像度量值（hex）
-//! - `itrustee_ta_mem`：TA 内存度量值（hex）
-//! - `itrustee_hash_alg`：哈希算法
-//! - `itrustee_version`：TA 版本号
+//! After the host completes verification, the following fields are injected
+//! into the root level of the evidence JSON:
+//! - `itrustee_uuid`: TA UUID
+//! - `itrustee_ta_img`: TA image measurement (hex)
+//! - `itrustee_ta_mem`: TA memory measurement (hex)
+//! - `itrustee_hash_alg`: hash algorithm
+//! - `itrustee_version`: TA version number
 //!
-//! claims：
-//! - `tee_type`：固定 "itrustee"
-//! - `verification`：passed / failed（基于 nonce 绑定）
-//! - `nonce_bound`：bool
-//! - `uuid` / `ta_img` / `ta_mem` / `hash_alg` / `version` / `ima_log_size`：从 evidence 提取
+//! Claims:
+//! - `tee_type`: always "itrustee"
+//! - `verification`: passed / failed (based on nonce binding)
+//! - `nonce_bound`: bool
+//! - `uuid` / `ta_img` / `ta_mem` / `hash_alg` / `version` / `ima_log_size`: extracted from evidence
 
 use base64::Engine;
 use serde::Deserialize;
@@ -42,7 +45,7 @@ struct ItrusteeEvidence {
     nonce: String,
     #[serde(default)]
     ima_log: Option<Vec<u8>>,
-    // host 端注入字段（可选）
+    // Host-injected fields (optional).
     #[serde(default)]
     itrustee_uuid: Option<String>,
     #[serde(default)]
@@ -56,6 +59,7 @@ struct ItrusteeEvidence {
 }
 
 fn evaluate_impl(evidence: Vec<u8>, expected_report_data: Option<Vec<u8>>) -> String {
+    // Parse the evidence JSON into an ItrusteeEvidence struct.
     let parsed: ItrusteeEvidence = match serde_json::from_slice(&evidence) {
         Ok(v) => v,
         Err(e) => {
@@ -63,6 +67,7 @@ fn evaluate_impl(evidence: Vec<u8>, expected_report_data: Option<Vec<u8>>) -> St
         }
     };
 
+    // Compare the evidence nonce with the expected nonce (report_data base64url-encoded).
     let nonce_ok = match expected_report_data.as_deref() {
         Some(report_data) => {
             let expected_nonce =
@@ -72,7 +77,7 @@ fn evaluate_impl(evidence: Vec<u8>, expected_report_data: Option<Vec<u8>>) -> St
         None => false,
     };
 
-    // 优先用 host 端注入值，否则从 report JSON 中提取
+    // Prefer host-injected values; fall back to extracting from the report JSON string.
     let (uuid, ta_img, ta_mem, hash_alg, version) = if parsed.itrustee_uuid.is_some() {
         (
             parsed.itrustee_uuid.unwrap_or_default(),
@@ -82,6 +87,7 @@ fn evaluate_impl(evidence: Vec<u8>, expected_report_data: Option<Vec<u8>>) -> St
             parsed.itrustee_version,
         )
     } else {
+        // Parse the report JSON string and walk into payload for each field.
         let report: serde_json::Value =
             serde_json::from_str(&parsed.report).unwrap_or(serde_json::Value::Null);
         let payload = report.get("payload");
@@ -112,12 +118,14 @@ fn evaluate_impl(evidence: Vec<u8>, expected_report_data: Option<Vec<u8>>) -> St
 
     let ima_log_size = parsed.ima_log.as_ref().map(|v| v.len());
 
+    // Build base claims with required fields.
     let mut claims = json!({
         "tee_type": "itrustee",
         "verification": if nonce_ok { "passed" } else { "failed" },
         "nonce_bound": nonce_ok,
         "uuid": uuid,
     });
+    // Conditionally insert optional fields.
     if let Some(obj) = claims.as_object_mut() {
         if let Some(ref v) = ta_img {
             obj.insert("ta_img".into(), v.clone().into());
@@ -157,6 +165,7 @@ impl GuestVerifier for Verifier {
         expected_report_data: OptionalData,
         _expected_init_data_hash: OptionalData,
     ) -> String {
+        // Convert OptionalData enum to Option<Vec<u8>> for easier handling.
         let report_data = match expected_report_data {
             OptionalData::Value(v) => Some(v),
             OptionalData::NotProvided => None,

@@ -1,9 +1,16 @@
-//! attester gRPC 服务。
+//! Attester gRPC service.
 //!
-//! RATS background-check：RP 推 nonce 给 attester，attester 收集 TEE evidence
-//! 并把本地 wasm 组件一并返回；RP 再转交 verifier 拿 EAR。
+//! RATS background-check: the RP pushes a nonce to the attester. The attester collects
+//! TEE evidence and returns it along with its local wasm component; the RP then forwards
+//! everything to the verifier for EAR issuance.
 //!
-//! 由配置决定本机 tee_type，请求中的 `tee_type` 必须与之一致，避免 RP 误用。
+//! The local tee_type is determined by config. The request's tee_type must match —
+//! this prevents the RP from accidentally invoking the wrong evidence path.
+//!
+//! Startup sequence:
+//! 1. Parse TOML config → tee_type + wasm component path + AA endpoint
+//! 2. Load the local wasm component bytes
+//! 3. Assemble gRPC service → listen on port
 
 mod config;
 mod evidence;
@@ -25,6 +32,7 @@ struct Cli {
     config: PathBuf,
 }
 
+/// gRPC service state: config + pre-loaded wasm component bytes.
 struct Svc {
     cfg: config::Config,
     wasm_bytes: Vec<u8>,
@@ -39,6 +47,7 @@ impl AttesterService for Svc {
         let req = req.into_inner();
         let tee = TeeType::try_from(req.tee_type)
             .map_err(|_| Status::invalid_argument("invalid tee_type"))?;
+        // Guard: request tee_type must match the attester's configured type
         if tee != self.cfg.tee_type {
             return Err(Status::invalid_argument(format!(
                 "tee_type mismatch: request={tee:?}, configured={:?}",
@@ -49,6 +58,7 @@ impl AttesterService for Svc {
             return Err(Status::invalid_argument("nonce required"));
         }
 
+        // Dispatch to the appropriate evidence builder based on tee_type
         let evidence = evidence::build_evidence(
             self.cfg.tee_type,
             &req.nonce,
@@ -76,6 +86,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let cfg = config::Config::load(&cli.config)?;
 
+    // Pre-load the wasm component once at startup — all requests serve the same bytes
     let wasm_bytes = std::fs::read(&cfg.wasm_component_path)
         .with_context(|| format!("read wasm component {}", cfg.wasm_component_path.display()))?;
     info!(

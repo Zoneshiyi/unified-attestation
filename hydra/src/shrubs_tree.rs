@@ -1,68 +1,86 @@
-//! Shrubs tree —— whitelist 累积器
+//! Shrubs tree — whitelist accumulator
 //!
-//! 移植自 hydra `hydra-sys/src/shurbstree.rs`，按 ark 0.5 + sponge Poseidon 调整：
+//! Ported from hydra `hydra-sys/src/shurbstree.rs`, adapted for ark 0.5 + sponge Poseidon:
 //!
-//! - 把 rayon 并行 chunk 换成串行 `chunks_exact`，保 wasm32-wasip1 兼容
-//! - 去掉 `println!` 调试输出
-//! - hasher 改为本 crate 的 [`poseidon::hash_pair`]，不再外传 ark crypto-primitives 类型
+//! - Replaced rayon parallel chunks with serial `chunks_exact` to preserve wasm32-wasip1
+//!   compatibility
+//! - Removed `println!` debug output
+//! - Hasher now uses this crate's [`poseidon::hash_pair`]; no ark crypto-primitives types
+//!   leak to callers
 
 use crate::poseidon;
 use alloc::vec::Vec;
 use ark_bls12_381::Fr as BlsScalar;
 
+/// Pairwise-hash a slice of scalars in chunks of 2.
+/// Returns a vector of hashes, one per pair. Any trailing odd element is discarded by
+/// `chunks_exact`.
 fn hash_chunks_pair(vect: &[BlsScalar]) -> Vec<BlsScalar> {
     vect.chunks_exact(2)
         .map(|c| poseidon::hash_pair(c[0], c[1]))
         .collect()
 }
 
-/// 批量构建：把 `leaves` 反复两两 hash，每层都把"最右侧落单元素"作为 shrubs root 推到 `root`。
+/// Batch construction: repeatedly pairwise-hash `leaves`, pushing the "rightmost unpaired
+/// element" from each level as a shrubs root into `root`.
 ///
-/// 与标准 Merkle 树的差异：标准树要求叶子数补齐到 2^n，shrubs 不补齐，
-/// 而是把每层无法配对的最右元素直接当作一个独立 root，等可信白名单里的多棵小树。
+/// Difference from a standard Merkle tree: standard trees pad the leaf count to a power of
+/// two; shrubs does not pad. Instead, at each level the rightmost element that cannot be
+/// paired is recorded directly as an independent root — like a set of small trusted trees.
 ///
-/// 例（4 个 leaf [L0 L1 L2 L3]）：
-///   层 0: 最右成对元素 L2 → root[0] = L2；下一层 [H(L0,L1), H(L2,L3)]
-///   层 1: 最右成对元素 H(L0,L1) → root[1] = H(L0,L1)
-///   最终 root = [L2, H(L0,L1)]，每个 leaf 都能落进其中一棵
+/// Example (4 leaves [L0 L1 L2 L3]):
+///   Level 0: rightmost paired element L2 → root[0] = L2; next = [H(L0,L1), H(L2,L3)]
+///   Level 1: rightmost paired element H(L0,L1) → root[1] = H(L0,L1)
+///   Final root = [L2, H(L0,L1)]; every leaf lands in one of these trees.
 ///
-/// 副作用：偶数 leaf 的层会把"次右"元素当 root（`last_i = len - 2`），
-/// 因为最右那个已经会被下一层 chunks_exact 配对吸收。
+/// Side effect: for even-length leaf layers, the "second-from-right" element is taken as
+/// root (`last_i = len - 2`), because the rightmost element will be absorbed by the next
+/// level's `chunks_exact` pairing.
 pub fn create_batch_devices(root: &mut Vec<BlsScalar>, leaves: &[BlsScalar]) {
     let len = leaves.len();
     if len == 0 {
         return;
     }
+    // Hash all leaf pairs into the next level
     let temp = hash_chunks_pair(leaves);
+    // Pick the unpaired rightmost element as a root:
+    //   - odd len  → last element (index len-1) is unpaired
+    //   - even len → second-to-last (index len-2); the last element pairs into next level
     let last_i = if len.is_multiple_of(2) {
         len - 2
     } else {
         len - 1
     };
     root.push(leaves[last_i]);
+    // Recurse on the next (hashed) level if non-empty
     if !temp.is_empty() {
         create_batch_devices(root, &temp);
     }
 }
 
-/// 在 shrubs 中给定 `value` 处的叶节点定位 Merkle path。
-/// 返回 `(path_siblings, direction_bits)`，bit=true 表示当前节点是右子。
+/// Locate the Merkle path for a leaf at index `value` within the shrubs tree.
+/// Returns `(path_siblings, direction_bits)`, where `bit=true` means the current node is
+/// the right child.
 ///
-/// 返回 `None` 的两种情况：
-/// 1. 当前层只剩 1 个 leaf 且与 root[0] 相等（boundary case）：
-///    leaf 自身就是某个 shrubs root，无 path 可走，电路里也就走不通"沿 path 升至某个 root"分支。
-///    示例：3 个 leaf 时 root[0] = L2，self_index=2 触发此情况。
-///    应对：attester 配置 self_index 时避开这些位置，或调整设备列表使其不落在 boundary。
-/// 2. 索引越界 / `value` 落入空层。
+/// Returns `None` in two cases:
+/// 1. The current level has only 1 leaf and it equals root[0] (boundary case):
+///    the leaf itself is a shrubs root, so there is no path to walk, and the circuit
+///    cannot follow the "ascend to a root via path" branch.
+///    Example: with 3 leaves, root[0] = L2; self_index=2 triggers this.
+///    Mitigation: the attester config should avoid these positions, or adjust the device
+///    list so the target index does not land on a boundary.
+/// 2. Index out of bounds, or `value` falls into an empty level.
 pub fn find_shrubs_path(
     root: &[BlsScalar],
     leaves: &[BlsScalar],
     j: usize,
     value: usize,
 ) -> Option<(Vec<BlsScalar>, Vec<bool>)> {
+    // Boundary case: the leaf at `value` is itself a root — no path exists
     if leaves.len() >= 2 && root[0] == leaves[value] {
         return None;
     }
+    // Guard against out-of-bounds
     if leaves.is_empty() || value >= leaves.len() {
         return None;
     }
@@ -70,6 +88,9 @@ pub fn find_shrubs_path(
     let mut path = Vec::<BlsScalar>::new();
     let mut index = Vec::<bool>::new();
 
+    // Determine sibling index and direction bit:
+    //   value is even → it is the left child, sibling is value+1, direction = true
+    //   value is odd  → it is the right child, sibling is value-1, direction = false
     let sibling_index = if value.is_multiple_of(2) {
         index.push(true);
         value.checked_add(1)?
@@ -77,18 +98,23 @@ pub fn find_shrubs_path(
         index.push(false);
         value.checked_sub(1)?
     };
+    // Push the sibling scalar (returns None if index out of bounds)
     path.push(*leaves.get(sibling_index)?);
 
+    // Hash to the next level and recurse
     let temp = hash_chunks_pair(leaves);
     if temp.len() >= 2 {
         let val = value / 2;
         let next_j = j + 1;
+        // Guard: value must map into the next level's range
         if val >= temp.len() || next_j >= root.len() {
             return None;
         }
+        // If the current node's hash already matches a root, path is complete
         if temp[val] == root[next_j] {
             return Some((path, index));
         }
+        // Otherwise recurse deeper into the next level
         let (mut sub_path, mut sub_index) = find_shrubs_path(root, &temp, next_j, val)?;
         path.append(&mut sub_path);
         index.append(&mut sub_index);

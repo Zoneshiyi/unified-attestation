@@ -94,7 +94,7 @@ CCA path (`cca` / `cca-hydra`):
 | `cca_realm_personalization_value` | injected after host verification | Realm personalization value (hex) |
 | `cca_platform_instance_id` | injected after host verification | CCA platform instance ID (hex) |
 | `cca_platform_implementation_id` | injected after host verification | CCA platform implementation ID (hex) |
-| `cca_platform_lifecycle` | injected after host verification | Platform security lifecycle: `secured` / `recoverable` / `not_secured` |
+| `cca_platform_lifecycle` | injected after host verification | Platform security lifecycle: `secured` / `secured_no_debug` / `recoverable` / `not_secured` |
 | `cca_platform_sw_components` | injected after host verification | Platform software component list |
 | `nonce_bound` | wasm appraiser check | Whether nonce binding succeeded |
 | `roots_hex` | hydra appraiser check | (cca-hydra only) shrubs root list |
@@ -159,9 +159,9 @@ Evidence collection: attester fetches `{evidence, dev_cert, event_log}` via AA R
 | TEE Type | `instance_identity` | `configuration` | `executables` |
 |---------|---------------------|-----------------|---------------|
 | **mock** | 2 | 2 | 2 |
-| **CCA / CCA-Hydra** | nonce_bound ? 2 : 0 | lifecycle=secured ? 2 : 1 | 2 |
+| **CCA / CCA-Hydra** | nonce_bound ? 2 : 0 | secured/secured_no_debug→2, not_secured/recoverable→1, unknown→0 | 2 |
 | **CSV / CSV-Hydra** | nonce_bound ? 2 : 0 | 2 | 2 |
 | **iTrustee / VirtCCA** | nonce_bound ? 2 : 0 | 2 | 2 |
-| **TDX / TDX-Hydra** | 2 | 2 | tcb_status=UpToDate ? 2 : SWHardeningNeeded ? 1 : 0 |
+| **TDX / TDX-Hydra** | 2 | 2 | UpToDate→2, SWHardeningNeeded/ConfigurationAndSWHardeningNeeded→1, OutOfDate/Revoked→0, unknown→1 |
 
 AR4SI values: 2 = Affirming, 1 = Warning, 0 = None.

@@ -64,7 +64,7 @@ verifier host:
      · cca_realm_personalization_value  (perso, hex)
      · cca_platform_instance_id  (hex)
      · cca_platform_implementation_id  (hex)
-     · cca_platform_lifecycle  ("secured" / "recoverable" / "not_secured")
+     · cca_platform_lifecycle  ("secured" / "secured_no_debug" / "recoverable" / "not_secured")
      · cca_platform_sw_components  (array)
 
 wasm appraiser (cca):

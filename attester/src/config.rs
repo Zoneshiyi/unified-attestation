@@ -1,4 +1,4 @@
-//! attester 配置。
+//! Attester configuration (TOML).
 
 use anyhow::{Context, Result};
 use protos::TeeType;
@@ -7,19 +7,23 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
-    /// attester gRPC 监听地址，例 `127.0.0.1:9000`。
+    /// attester gRPC listen address, e.g. `127.0.0.1:9000`
     pub listen: String,
+    /// TEE type of this attester instance (custom deserializer: kebab string → proto enum)
     #[serde(deserialize_with = "deser_tee_type")]
     pub tee_type: TeeType,
+    /// Path to the local wasm component binary
     pub wasm_component_path: PathBuf,
-    /// 仅 hydra 模式使用：trusted setup 产物路径
+    /// Hydra trusted setup artifacts (only for hydra-stacking paths)
     #[serde(default)]
     pub zk: Option<ZkConfig>,
-    /// CCA 模式：guest-components api-server-rest 地址，默认 127.0.0.1:8006
+    /// guest-components api-server-rest address for evidence collection.
+    /// Used by CCA / CSV / TDX / iTrustee / VirtCCA paths.
     #[serde(default = "default_aa_endpoint")]
     pub aa_endpoint: String,
 }
 
+/// Parse a kebab-case tee_type string to the proto enum.
 pub fn parse_tee_type(s: &str) -> Result<TeeType> {
     match s {
         "mock" => Ok(TeeType::Mock),
@@ -40,21 +44,23 @@ fn deser_tee_type<'de, D: serde::Deserializer<'de>>(d: D) -> Result<TeeType, D::
     parse_tee_type(&s).map_err(serde::de::Error::custom)
 }
 
+/// Hydra zero-knowledge configuration (for hydra-stacking paths only).
 #[derive(Debug, Deserialize)]
 pub struct ZkConfig {
     pub proving_key_path: PathBuf,
     pub verifying_key_path: PathBuf,
-    /// shrubs whitelist：设备列表 + self_index。
+    /// Shrubs whitelist: device list + self_index for this attester.
     pub whitelist: WhitelistConfig,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct WhitelistConfig {
-    /// 设备列表：每个 device 提供 (pk, sk, ar) 三元组（demo 用十进制小整数表达 Fr）。
-    /// 真实部署中应来自安全的设备注册流程，这里仅用于完整链路演示。
+    /// Device list: each device provides a (pk, sk, ar) triple.
+    /// In the demo, small decimal integers represent Fr elements. In production,
+    /// these should come from a secure device registration process.
     pub devices: Vec<DeviceEntry>,
-    /// 当前 attester 在 `devices` 中的下标。circuit 走完整 path 校验时此 leaf 必须落在
-    /// shrubs root 列表的可达 Merkle path 上（即不能选 hydra shrubs 中"落单"的位置）。
+    /// Index of this attester in `devices`. The leaf must fall on a reachable
+    /// Merkle path of the shrubs root list — positions on root boundaries are invalid.
     pub self_index: usize,
 }
 

@@ -1,6 +1,6 @@
-//! EAR 输出。
+//! EAR (Entity Attestation Result) output.
 //!
-//! 输出 JWT 形式的 EAR：自定义 claims + ES256 签名。
+//! Produces a JWT-formatted EAR: custom claims + ES256 signature.
 
 use crate::config::EarConfig;
 use anyhow::{Context, Result};
@@ -8,6 +8,7 @@ use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// ES256 signing context loaded from a PEM-encoded EC private key.
 pub struct SigningContext {
     encoding_key: EncodingKey,
 }
@@ -21,34 +22,41 @@ impl SigningContext {
         Ok(Self { encoding_key })
     }
 
+    /// Sign an EarClaims struct into a JWT string.
     pub fn sign(&self, claims: EarClaims) -> Result<String> {
         let header = Header::new(Algorithm::ES256);
         encode(&header, &claims, &self.encoding_key).context("encode JWT")
     }
 }
 
-/// EAR 顶层 claims。
+/// EAR top-level claims (JWT payload).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EarClaims {
+    /// Issuer identifier
     pub iss: String,
+    /// Issued at (Unix seconds)
     pub iat: i64,
-    /// 可选过期时间
+    /// Optional expiration time (Unix seconds)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exp: Option<i64>,
+    /// Nonce from the RP (base64url no-pad), used for replay protection
     pub eat_nonce: String,
+    /// TEE type string (kebab-case)
     pub tee_type: String,
+    /// Stable wasm component identifier
     pub component_id: String,
-    /// wasm 组件返回的 claims map（已剔除 error 字段）
+    /// Claims map returned by the wasm component (error field already stripped)
     pub submods: Value,
-    /// 可信向量：实例身份 / 配置 / 可执行文件
+    /// Trust vector: instance_identity / configuration / executables
     pub trust_vector: TrustVector,
-    /// 发行者元数据
+    /// Issuer metadata
     pub verifier_id: VerifierId,
-    /// EAT profile 标识
+    /// EAT profile identifier
     #[serde(skip_serializing_if = "Option::is_none")]
     pub eat_profile: Option<String>,
 }
 
+/// Verifier identity metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VerifierId {
     pub developer: String,
@@ -56,6 +64,9 @@ pub struct VerifierId {
     pub build: Option<String>,
 }
 
+/// AR4SI Trust Vector with three dimensions.
+///
+/// Values: 2 = Affirming (trusted), 1 = Warning, 0 = None (untrusted).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrustVector {
     pub instance_identity: i32,
@@ -68,7 +79,8 @@ impl TrustVector {
         Self { instance_identity, configuration, executables }
     }
 
-    /// 全部维度置为 affirming（=2）。
+    /// Set all dimensions to affirming (=2).
+    /// Used when no TEE-specific risk signal is available (mock, itrustee, virtcca).
     pub fn affirming() -> Self {
         Self { instance_identity: 2, configuration: 2, executables: 2 }
     }

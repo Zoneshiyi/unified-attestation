@@ -98,7 +98,7 @@ CCA 路径（`cca` / `cca-hydra`）：
 | `cca_realm_personalization_value` | host 验证后注入 | Realm 个性化值（hex） |
 | `cca_platform_instance_id` | host 验证后注入 | CCA 平台实例 ID（hex） |
 | `cca_platform_implementation_id` | host 验证后注入 | CCA 平台实现 ID（hex） |
-| `cca_platform_lifecycle` | host 验证后注入 | 平台安全生命周期状态：`secured` / `recoverable` / `not_secured` |
+| `cca_platform_lifecycle` | host 验证后注入 | 平台安全生命周期状态：`secured` / `secured_no_debug` / `recoverable` / `not_secured` |
 | `cca_platform_sw_components` | host 验证后注入 | 平台软件组件列表，每个含 `measurement` / `signer_id` / `measurement_type` / `version` |
 | `nonce_bound` | wasm appraiser 校验 | nonce 绑定是否成功 |
 | `roots_hex` | hydra appraiser 校验 | （仅 cca-hydra）shrubs root 列表 |
@@ -165,9 +165,9 @@ host 端验证：完整验签需 OpenSSL + cose + ciborium（CBOR/COSE 解码 + 
 | TEE 类型 | `instance_identity` | `configuration` | `executables` |
 |---------|---------------------|-----------------|---------------|
 | **mock** | 2 | 2 | 2 |
-| **CCA / CCA-Hydra** | nonce_bound ? 2 : 0 | lifecycle=secured ? 2 : 1 | 2 |
+| **CCA / CCA-Hydra** | nonce_bound ? 2 : 0 | secured/secured_no_debug→2, not_secured/recoverable→1, unknown→0 | 2 |
 | **CSV / CSV-Hydra** | nonce_bound ? 2 : 0 | 2 | 2 |
 | **iTrustee / VirtCCA** | nonce_bound ? 2 : 0 | 2 | 2 |
-| **TDX / TDX-Hydra** | 2 | 2 | tcb_status=UpToDate ? 2 : SWHardeningNeeded ? 1 : 0 |
+| **TDX / TDX-Hydra** | 2 | 2 | UpToDate→2, SWHardeningNeeded/ConfigurationAndSWHardeningNeeded→1, OutOfDate/Revoked→0, unknown→1 |
 
 AR4SI 取值含义：2 = Affirming（主张可信），1 = Warning（有告警），0 = None（不可信）。

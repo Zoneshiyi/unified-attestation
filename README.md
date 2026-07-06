@@ -95,8 +95,8 @@ End-to-end steps for each TEE require corresponding hardware. Command references
 | CCA / CCA + hydra   | [docs/en/cca.md](docs/en/cca.md)                                   | ARM CCA + [guest-components](https://github.com/SmartTree-zq1997/guest-components) |
 | CSV / CSV + hydra   | [docs/en/csv.md](docs/en/csv.md)                                   | Hygon CSV + AA + HSK/CEK cache or KDS                                          |
 | TDX / TDX + hydra   | [docs/en/tdx.md](docs/en/tdx.md)                                   | Intel TDX + AA + PCS / PCCS reachable                                          |
-| iTrustee            | [docs/en/protocol.md](docs/en/protocol.md#per-tee-claims-in-submods) | iTrustee TEE + libteeverifier.so                                               |
-| VirtCCA             | [docs/en/protocol.md](docs/en/protocol.md#per-tee-claims-in-submods) | VirtCCA TEE + libvccaattestation.so                                            |
+| iTrustee            | [docs/en/itrustee.md](docs/en/itrustee.md)                           | iTrustee TEE + libteeverifier.so                                               |
+| VirtCCA             | [docs/en/virtcca.md](docs/en/virtcca.md)                             | VirtCCA TEE + libvccaattestation.so                                            |
 
 Supported `tee_type` values: `mock` / `cca` / `cca-hydra` / `csv` / `csv-hydra` / `tdx` / `tdx-hydra` / `itrustee` / `virtcca`.
 
@@ -196,4 +196,6 @@ Detailed documentation index:
 | CCA / CCA + hydra path                                   | [docs/en/cca.md](docs/en/cca.md)                                   |
 | Hygon CSV / CSV + hydra path                             | [docs/en/csv.md](docs/en/csv.md)                                   |
 | TDX / TDX + hydra path                                   | [docs/en/tdx.md](docs/en/tdx.md)                                   |
+| iTrustee path (claims, evidence schema, test steps)       | [docs/en/itrustee.md](docs/en/itrustee.md)                         |
+| VirtCCA path (claims, evidence schema, test steps)        | [docs/en/virtcca.md](docs/en/virtcca.md)                           |
 | hydra sub-module (circuit, shrubs, setup)                | [docs/en/hydra.md](docs/en/hydra.md)                               |

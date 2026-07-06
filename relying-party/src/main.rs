@@ -1,11 +1,11 @@
-//! relying-party：RP 触发的 background-check（gRPC 客户端）。
+//! relying-party: RP-triggered background-check (gRPC client).
 //!
-//! 流程：
-//! 1. 本地生成 32B 随机 nonce
-//! 2. AttesterService.GetEvidence → 拿 evidence + wasm
-//! 3. VerifierService.Verify → 拿 EAR
-//! 4. 用 verifier 公钥本地校验 EAR JWT
-//! 5. 校验 EAR 中 eat_nonce 与本地 nonce 是否一致
+//! Flow:
+//! 1. Generate a 32-byte random nonce locally
+//! 2. AttesterService.GetEvidence -> get evidence + wasm
+//! 3. VerifierService.Verify -> get EAR
+//! 4. Verify the EAR JWT locally using the verifier's public key
+//! 5. Check that eat_nonce in the EAR matches the local nonce
 
 use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
@@ -27,34 +27,35 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
 
-    /// attester gRPC 端点，例 `http://127.0.0.1:9000`。
+    /// attester gRPC endpoint, e.g. `http://127.0.0.1:9000`.
     #[arg(long)]
     attester: Option<String>,
-    /// verifier gRPC 端点，例 `http://127.0.0.1:8080`。
+    /// verifier gRPC endpoint, e.g. `http://127.0.0.1:8080`.
     #[arg(long)]
     verifier: Option<String>,
-    /// TEE 类型，需与 attester 配置一致。
+    /// TEE type, must match the attester configuration.
     #[arg(long, value_parser = parse_tee_type)]
     tee_type: Option<TeeType>,
-    /// verifier 的 ES256 公钥（PEM 格式）。
+    /// Verifier's ES256 public key (PEM format).
     #[arg(long)]
     pubkey: Option<PathBuf>,
-    /// 可选：把 EAR 写到文件以便调试。
+    /// Optional: write the EAR to a file for debugging.
     #[arg(long)]
     ear_out: Option<PathBuf>,
 }
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// 从链上查询设备 VC（需 `blockchain` feature + Foundry `cast` CLI）
+    /// Query the device VC from the chain (requires `blockchain` feature + Foundry `cast` CLI).
     #[cfg(feature = "blockchain")]
     #[command(name = "query-vc")]
     QueryVc {
-        /// 设备公钥 hex
+        /// Device public key hex.
         device_pubkey: String,
     },
 }
 
+/// Parse a TEE type string into a TeeType enum variant.
 fn parse_tee_type(s: &str) -> Result<TeeType, String> {
     match s {
         "mock" => Ok(TeeType::Mock),
@@ -71,12 +72,13 @@ fn parse_tee_type(s: &str) -> Result<TeeType, String> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Initialize logging, defaulting to "info" level if not configured.
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
     let cli = Cli::parse();
 
-    // query-vc 子命令：查链上 VC，不跑远程证明
+    // query-vc subcommand: query the on-chain VC, does not run remote attestation.
     #[cfg(feature = "blockchain")]
     if let Some(Command::QueryVc { device_pubkey }) = cli.command {
         use hydra::device_vc::{ChainConfig, query_device_vc_from_chain};
@@ -86,24 +88,25 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    // 标准远程证明流程
+    // Standard remote attestation flow.
     let attester = cli.attester.context("--attester required")?;
     let verifier = cli.verifier.context("--verifier required")?;
     let tee_type = cli.tee_type.context("--tee-type required")?;
     let pubkey = cli.pubkey.context("--pubkey required")?;
 
+    // Read and parse the verifier's EC public key (PEM).
     let pem =
         std::fs::read(&pubkey).with_context(|| format!("read pubkey {}", pubkey.display()))?;
     let key = DecodingKey::from_ec_pem(&pem).context("parse pubkey as EC PEM")?;
 
-    // 1. nonce
+    // ---- Step 1: generate a 32-byte random nonce ----
     let mut nonce = [0u8; 32];
     use rand::RngCore;
     rand::thread_rng().fill_bytes(&mut nonce);
     let nonce_b64 = B64URL.encode(nonce);
     info!(nonce = %nonce_b64, "generated nonce");
 
-    // 2. attester
+    // ---- Step 2: call attester GetEvidence ----
     let mut att = AttesterServiceClient::connect(attester.clone())
         .await
         .with_context(|| format!("connect attester {attester}"))?;
@@ -121,7 +124,7 @@ async fn main() -> Result<()> {
         "got evidence"
     );
 
-    // 3. verifier
+    // ---- Step 3: call verifier Verify ----
     let mut ver = VerifierServiceClient::connect(verifier.clone())
         .await
         .with_context(|| format!("connect verifier {verifier}"))?;
@@ -136,19 +139,21 @@ async fn main() -> Result<()> {
         .context("verifier Verify")?
         .into_inner();
 
+    // Optionally write raw EAR to a file.
     if let Some(path) = &cli.ear_out {
         std::fs::write(path, &resp.ear).with_context(|| format!("write {}", path.display()))?;
     }
 
-    // 4. EAR 验签
+    // ---- Step 4: verify the EAR JWT signature ----
     let mut validation = Validation::new(Algorithm::ES256);
+    // Disable standard JWT claim requirements (exp, etc.) — we only care about eat_nonce.
     validation.required_spec_claims.clear();
     validation.validate_exp = false;
     let data = jsonwebtoken::decode::<Value>(resp.ear.trim(), &key, &validation)
         .context("decode/verify EAR")?;
     info!("EAR signature verified");
 
-    // 5. eat_nonce 必须等于本地 nonce
+    // ---- Step 5: ensure eat_nonce matches the local nonce ----
     let eat_nonce = data
         .claims
         .get("eat_nonce")
@@ -158,8 +163,10 @@ async fn main() -> Result<()> {
         bail!("eat_nonce mismatch: ear={eat_nonce}, expected={nonce_b64}");
     }
 
+    // Print the full EAR claims to stdout.
     println!("{}", serde_json::to_string_pretty(&data.claims)?);
 
+    // Check the trust_vector.executables value to confirm affirmation.
     let trust_vector = data
         .claims
         .get("trust_vector")
