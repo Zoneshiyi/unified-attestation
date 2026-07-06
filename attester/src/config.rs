@@ -29,6 +29,8 @@ pub fn parse_tee_type(s: &str) -> Result<TeeType> {
         "csv-hydra" => Ok(TeeType::CsvHydra),
         "tdx" => Ok(TeeType::Tdx),
         "tdx-hydra" => Ok(TeeType::TdxHydra),
+        "itrustee" => Ok(TeeType::Itrustee),
+        "virtcca" => Ok(TeeType::Virtcca),
         other => anyhow::bail!("unknown tee_type '{other}'"),
     }
 }

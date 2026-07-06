@@ -8,6 +8,8 @@ mod config;
 mod csv_native;
 mod ear;
 mod grpc;
+mod itrustee_native;
+mod virtcca_native;
 mod wasm_host;
 
 use anyhow::{Context, Result};

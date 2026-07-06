@@ -12,6 +12,8 @@ enum TeeType {
   TDX_HYDRA = 5;
   CSV = 6;
   CSV_HYDRA = 7;
+  ITRUSTEE = 8;
+  VIRTCCA = 9;
 }
 
 // RP -> attester：取 evidence + 本机 wasm 组件。

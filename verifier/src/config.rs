@@ -25,6 +25,10 @@ pub struct PolicyConfig {
     pub csv: CsvPolicy,
     #[serde(default)]
     pub tdx: TdxPolicy,
+    #[serde(default)]
+    pub itrustee: ItrusteePolicy,
+    #[serde(default)]
+    pub virtcca: VirtccaPolicy,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -122,6 +126,25 @@ impl Default for TdxPolicy {
 
 fn default_pccs_url() -> String {
     "https://api.trustedservices.intel.com".to_string()
+}
+
+/// iTrustee policy（预留，native 验证依赖 libteeverifier.so）。
+#[derive(Debug, Default, Deserialize)]
+pub struct ItrusteePolicy {
+    /// 可信 TA UUID 列表。空表示跳过。
+    #[serde(default)]
+    pub trusted_uuids: Vec<String>,
+    /// 可信 TA 度量值列表（hex）。空表示跳过。
+    #[serde(default)]
+    pub trusted_ta_img_hex: Vec<String>,
+}
+
+/// VirtCCA policy（预留，native 验证依赖 libvccaattestation.so + OpenSSL）。
+#[derive(Debug, Default, Deserialize)]
+pub struct VirtccaPolicy {
+    /// 可信 RIM 列表（hex）。空表示跳过。
+    #[serde(default)]
+    pub trusted_rim_hex: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]

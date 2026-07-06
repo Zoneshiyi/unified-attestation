@@ -25,6 +25,9 @@
 | `policy.tdx.trusted_mr_seam_hex` | `[]` | 可信 SEAM 测量 |
 | `policy.tdx.trusted_mr_config_id_hex` | `[]` | init_data_hash 列表 |
 | `policy.tdx.accept_tcb_status` | `[]` | 接受的 TCB status |
+| `policy.itrustee.trusted_uuids` | `[]` | 可信 TA UUID 列表（空表示跳过） |
+| `policy.itrustee.trusted_ta_img_hex` | `[]` | 可信 TA 度量值列表（hex，空表示跳过） |
+| `policy.virtcca.trusted_rim_hex` | `[]` | 可信 RIM 列表（hex，空表示跳过） |
 
 `wasm.allow_unsigned = false` 时，`trusted_component_hashes` 必须至少配一项，
 否则 verifier 启动失败。新 build 后用 `sha256sum target/wasm32-wasip1/release/*.wasm`
@@ -36,13 +39,15 @@ policy 的 `*_hex` 列表均空 → 对应 policy 跳过。生产部署中至少
 - CSV：`enabled = true` + `cert_dir`（或 `allow_kds_fetch = true`） + `trusted_chip_ids`
 - hydra：`trusted_roots_hex`
 - TDX：`pccs_url` + 四项 `trusted_*_hex` / `accept_tcb_status` 全填
+- iTrustee：`trusted_uuids` + `trusted_ta_img_hex`（native 验证依赖 libteeverifier.so）
+- VirtCCA：`trusted_rim_hex`（native 验证依赖 libvccaattestation.so）
 
 ## attester
 
 | key | 默认值 | 说明 |
 |---|---|---|
 | `listen` | — | attester gRPC 监听地址，例 `127.0.0.1:9000` |
-| `tee_type` | — | `mock` / `cca` / `cca-hydra` / `csv` / `csv-hydra` / `tdx` / `tdx-hydra` |
+| `tee_type` | — | `mock` / `cca` / `cca-hydra` / `csv` / `csv-hydra` / `tdx` / `tdx-hydra` / `itrustee` / `virtcca` |
 | `wasm_component_path` | — | 本地 wasm 组件路径 |
 | `aa_endpoint` | `http://127.0.0.1:8006` | guest-components api-server-rest 地址（cca / cca-hydra / csv / csv-hydra / tdx / tdx-hydra 用） |
 | `zk.proving_key_path` | — | hydra 模式必填 |
@@ -73,3 +78,5 @@ policy 的 `*_hex` 列表均空 → 对应 policy 跳过。生产部署中至少
 | `verifier-csv-hydra.toml` / `attester-csv-hydra.toml` | CSV + hydra 叠加 | `csv-hydra` |
 | `verifier-tdx.toml` / `attester-tdx.toml` | TDX | `tdx` |
 | `verifier-tdx-hydra.toml` / `attester-tdx-hydra.toml` | TDX + hydra 叠加 | `tdx-hydra` |
+| `verifier-itrustee.toml` / `attester-itrustee.toml` | iTrustee | `itrustee` |
+| `verifier-virtcca.toml` / `attester-virtcca.toml` | VirtCCA | `virtcca` |

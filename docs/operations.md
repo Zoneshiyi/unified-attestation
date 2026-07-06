@@ -26,6 +26,52 @@
 - CCA / CCA + hydra：[docs/cca.md](cca.md)
 - Hygon CSV / CSV + hydra：[docs/csv.md](csv.md)
 - TDX / TDX + hydra：[docs/tdx.md](tdx.md)
+- iTrustee：需 iTrustee TEE 硬件 + libqca.so + libteeverifier.so（测试命令见下文）
+- VirtCCA：需 VirtCCA TEE 硬件 + libvccaattestation.so + OpenSSL（测试命令见下文）
+
+### iTrustee 端到端测试
+
+```bash
+bash scripts/gen-keys.sh
+bash scripts/build-appraisers.sh
+cargo build --release -p verifier -p attester -p relying-party
+
+ttrpc-aa &
+api-server-rest --features attestation &
+
+./target/release/verifier --config config/verifier-itrustee.toml > /tmp/verifier-itrustee.log 2>&1 &
+./target/release/attester --config config/attester-itrustee.toml > /tmp/attester-itrustee.log 2>&1 &
+sleep 2
+
+./target/release/relying-party \
+    --attester http://127.0.0.1:9000 \
+    --verifier http://127.0.0.1:8080 \
+    --tee-type itrustee \
+    --pubkey config/keys/ear_public.pem \
+    --ear-out /tmp/ear-itrustee.jwt
+```
+
+### VirtCCA 端到端测试
+
+```bash
+bash scripts/gen-keys.sh
+bash scripts/build-appraisers.sh
+cargo build --release -p verifier -p attester -p relying-party
+
+ttrpc-aa &
+api-server-rest --features attestation &
+
+./target/release/verifier --config config/verifier-virtcca.toml > /tmp/verifier-virtcca.log 2>&1 &
+./target/release/attester --config config/attester-virtcca.toml > /tmp/attester-virtcca.log 2>&1 &
+sleep 2
+
+./target/release/relying-party \
+    --attester http://127.0.0.1:9000 \
+    --verifier http://127.0.0.1:8080 \
+    --tee-type virtcca \
+    --pubkey config/keys/ear_public.pem \
+    --ear-out /tmp/ear-virtcca.jwt
+```
 
 ## 工具
 

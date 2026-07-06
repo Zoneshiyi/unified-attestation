@@ -13,6 +13,8 @@ members = [
     "appraisers/csv-hydra",
     "appraisers/tdx",
     "appraisers/tdx-hydra",
+    "appraisers/itrustee",
+    "appraisers/virtcca",
 ]
 # `cargo build`（不带 -p / --workspace）只编 host 二进制；
 # wasm 组件由 `cargo component build -p <appraiser>` 显式编译。

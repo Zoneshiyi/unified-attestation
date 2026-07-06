@@ -1,0 +1,15 @@
+listen = "127.0.0.1:8080"
+
+[wasm]
+allow_unsigned = true
+registry_dir = "data/components"
+trusted_component_hashes = []
+
+[ear]
+signing_key_path = "config/keys/ear_signing.pem"
+
+[policy.itrustee]
+# 可信 TA UUID 白名单（空 = 跳过）
+trusted_uuids = []
+# 可信 TA 度量值白名单（hex，空 = 跳过）
+trusted_ta_img_hex = []

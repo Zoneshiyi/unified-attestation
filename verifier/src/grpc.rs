@@ -56,7 +56,10 @@ impl VerifierService for AppState {
             None => return Err(Status::invalid_argument("wasm required")),
         };
 
-        // 2. host 端 CCA / CSV 真验签 + 度量值注入 evidence JSON
+        // 2. host 端 CCA / CSV / iTrustee / VirtCCA 证据处理 + 度量值注入 evidence JSON
+        //    CCA / CSV：完整链验签 + 度量值注入
+        //    iTrustee / VirtCCA：解析 evidence 提取字段注入（真验签需 .so / OpenSSL，部署时接入）
+        //    TDX：host 端按 fmspc 拉取 collateral 注入 evidence
         let cca_platform_lifecycle: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
         let evidence_for_wasm = if matches!(tee, TeeType::Cca | TeeType::CcaHydra) {
             let mut ev: serde_json::Value = serde_json::from_slice(&req.evidence)
@@ -90,6 +93,32 @@ impl VerifierService for AppState {
                 let obj = ev.as_object_mut()
                     .ok_or_else(|| Status::invalid_argument("evidence root must be object"))?;
                 inject_csv_claims(obj, &result);
+            }
+            serde_json::to_vec(&ev)
+                .map_err(|e| Status::internal(format!("serialize evidence: {e}")))?
+        } else if matches!(tee, TeeType::Itrustee) {
+            let mut ev: serde_json::Value = serde_json::from_slice(&req.evidence)
+                .map_err(|e| Status::invalid_argument(format!("evidence json: {e}")))?;
+            match crate::itrustee_native::extract_claims(&req.evidence) {
+                Ok(result) => {
+                    let obj = ev.as_object_mut()
+                        .ok_or_else(|| Status::invalid_argument("evidence root must be object"))?;
+                    inject_itrustee_claims(obj, &result);
+                }
+                Err(e) => warn!(error = %e, "itrustee claim extraction failed, proceeding with raw evidence"),
+            }
+            serde_json::to_vec(&ev)
+                .map_err(|e| Status::internal(format!("serialize evidence: {e}")))?
+        } else if matches!(tee, TeeType::Virtcca) {
+            let mut ev: serde_json::Value = serde_json::from_slice(&req.evidence)
+                .map_err(|e| Status::invalid_argument(format!("evidence json: {e}")))?;
+            match crate::virtcca_native::extract_claims(&req.evidence) {
+                Ok(result) => {
+                    let obj = ev.as_object_mut()
+                        .ok_or_else(|| Status::invalid_argument("evidence root must be object"))?;
+                    inject_virtcca_claims(obj, &result);
+                }
+                Err(e) => warn!(error = %e, "virtcca claim extraction failed, proceeding with raw evidence"),
             }
             serde_json::to_vec(&ev)
                 .map_err(|e| Status::internal(format!("serialize evidence: {e}")))?
@@ -142,8 +171,9 @@ impl VerifierService for AppState {
         }
 
         match tee {
-            // host 端已完成 CSV 链验签，appraiser 不需要再 policy。
-            TeeType::Unspecified | TeeType::Mock | TeeType::Csv => {}
+            // Mock / CSV / Itrustee / Virtcca：policy 匹配在 host 端已完成（或 wasm appraiser 自行处理），
+            // 此处不额外校验。Itrustee / Virtcca 的 native 验证依赖 .so 库，部署时按需接入。
+            TeeType::Unspecified | TeeType::Mock | TeeType::Csv | TeeType::Itrustee | TeeType::Virtcca => {}
             TeeType::Cca => {
                 enforce_cca_policy(&self.cca_policy, &outcome.claims).map_err(|e| {
                     warn!(error = %e, "cca policy mismatch");
@@ -290,6 +320,8 @@ fn tee_type_str(t: TeeType) -> &'static str {
         TeeType::CsvHydra => "csv-hydra",
         TeeType::Tdx => "tdx",
         TeeType::TdxHydra => "tdx-hydra",
+        TeeType::Itrustee => "itrustee",
+        TeeType::Virtcca => "virtcca",
     }
 }
 
@@ -476,6 +508,43 @@ fn enforce_hydra_policy(policy: &HydraZkPolicy, claims: &serde_json::Value) -> R
         }
     }
     Ok(())
+}
+
+/// 将 iTrustee 验证结果注入 evidence JSON，供 wasm appraiser 透传。
+fn inject_itrustee_claims(
+    obj: &mut serde_json::Map<String, serde_json::Value>,
+    result: &crate::itrustee_native::ItrusteeVerificationResult,
+) {
+    if let Some(ref v) = result.uuid {
+        obj.insert("itrustee_uuid".into(), v.clone().into());
+    }
+    if let Some(ref v) = result.ta_img {
+        obj.insert("itrustee_ta_img".into(), v.clone().into());
+    }
+    if let Some(ref v) = result.ta_mem {
+        obj.insert("itrustee_ta_mem".into(), v.clone().into());
+    }
+    if let Some(ref v) = result.hash_alg {
+        obj.insert("itrustee_hash_alg".into(), v.clone().into());
+    }
+    if let Some(ref v) = result.version {
+        obj.insert("itrustee_version".into(), v.clone().into());
+    }
+}
+
+/// 将 VirtCCA 验证结果注入 evidence JSON，供 wasm appraiser 透传。
+fn inject_virtcca_claims(
+    obj: &mut serde_json::Map<String, serde_json::Value>,
+    result: &crate::virtcca_native::VirtccaVerificationResult,
+) {
+    obj.insert("virtcca_token_size".into(), result.token_size.into());
+    obj.insert("virtcca_cert_size".into(), result.cert_size.into());
+    if let Some(sz) = result.ima_log_size {
+        obj.insert("virtcca_ima_log_size".into(), sz.into());
+    }
+    if let Some(sz) = result.event_log_size {
+        obj.insert("virtcca_event_log_size".into(), sz.into());
+    }
 }
 
 fn enforce_tdx_policy(policy: &TdxPolicy, claims: &serde_json::Value) -> Result<(), String> {

@@ -19,5 +19,7 @@ cargo component build --release \
   -p csv-appraiser \
   -p csv-hydra-appraiser \
   -p tdx-appraiser \
-  -p tdx-hydra-appraiser
+  -p tdx-hydra-appraiser \
+  -p itrustee-appraiser \
+  -p virtcca-appraiser
 ls -lh "$ROOT/target/wasm32-wasip1/release/"*.wasm

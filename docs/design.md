@@ -14,7 +14,7 @@
 
 verifier 不需要理解 evidence 的内部格式，不需要知道用了什么签名算法，甚至不需要知道零知识证明的存在——这些都在 wasm 组件内部完成。TEE 平台升级只需更新 wasm 组件并重新计算 sha256 白名单，verifier 代码无需任何改动。
 
-> 例外：CCA 验签依赖 ccatoken，该库无法编译到 wasm32-wasip1，因此 CCA 真验签放在 verifier host，与 trustmee-artifact 一致；wasm appraiser 只做字段透传与业务级 nonce 比对。其它 TEE（含 TDX）仍走"全部进 wasm"。
+> 例外：CCA / CSV 验签依赖 ccatoken / csv-rs（OpenSSL），iTrustee 验签依赖 libteeverifier.so FFI，VirtCCA 验签依赖 OpenSSL + COSE/CBOR，这些库无法编译到 wasm32-wasip1。因此这四类 TEE 的真验签放在 verifier host，wasm appraiser 只做字段透传与 nonce 比对。TDX 仍走"全部进 wasm"（dcap-qvl 支持 wasm32）。
 
 ## challenge 与 proof 密码学绑定
 

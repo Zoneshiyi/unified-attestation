@@ -1,9 +1,9 @@
 //! evidence 构造。
 //!
 //! - mock：固定 payload + nonce 透传
-//! - cca：通过 guest-components attestation-agent 取 CCA token
-//! - cca-hydra：CCA token + hydra Groth16 证明叠加，共用同一 nonce
-//! - tdx：从 AA 取 TDX quote 即可，collateral 由 verifier host 端按 fmspc 拉取并注入
+//! - cca / csv / tdx：通过 guest-components attestation-agent 取 evidence
+//! - itrustee / virtcca：通过 AA 取 evidence，与 CCA/CSV 模式一致
+//! - *-hydra：TEE evidence + Groth16 证明叠加，共用同一 nonce
 
 use crate::config::{WhitelistConfig, ZkConfig};
 use anyhow::{Context, Result};
@@ -93,6 +93,14 @@ pub async fn build_evidence(
                 combined.extend(m);
             }
             Ok(serde_json::to_vec(&serde_json::Value::Object(combined))?)
+        }
+        TeeType::Itrustee => {
+            let part = build_itrustee_part(nonce_b64, aa_endpoint)?;
+            Ok(serde_json::to_vec(&part)?)
+        }
+        TeeType::Virtcca => {
+            let part = build_virtcca_part(nonce_b64, aa_endpoint)?;
+            Ok(serde_json::to_vec(&part)?)
         }
         TeeType::Unspecified => anyhow::bail!("tee_type unspecified"),
     }
@@ -255,6 +263,28 @@ fn build_tdx_part(nonce_b64: &str, aa_endpoint: &str) -> Result<serde_json::Valu
     Ok(json!({
         "quote_b64": B64.encode(&quote_bytes),
     }))
+}
+
+/// 通过 AA 取 iTrustee evidence（report JSON + 可选 IMA log），添加 nonce 字段。
+fn build_itrustee_part(nonce_b64: &str, aa_endpoint: &str) -> Result<serde_json::Value> {
+    let evidence_bytes = fetch_aa_evidence(nonce_b64, aa_endpoint)?;
+    let mut evidence: serde_json::Value =
+        serde_json::from_slice(&evidence_bytes).context("parse itrustee AA evidence")?;
+    if let Some(obj) = evidence.as_object_mut() {
+        obj.insert("nonce".into(), nonce_b64.into());
+    }
+    Ok(evidence)
+}
+
+/// 通过 AA 取 VirtCCA evidence（CBOR token + dev_cert + event_log），添加 nonce 字段。
+fn build_virtcca_part(nonce_b64: &str, aa_endpoint: &str) -> Result<serde_json::Value> {
+    let evidence_bytes = fetch_aa_evidence(nonce_b64, aa_endpoint)?;
+    let mut evidence: serde_json::Value =
+        serde_json::from_slice(&evidence_bytes).context("parse virtcca AA evidence")?;
+    if let Some(obj) = evidence.as_object_mut() {
+        obj.insert("nonce".into(), nonce_b64.into());
+    }
+    Ok(evidence)
 }
 
 fn now_secs() -> i64 {

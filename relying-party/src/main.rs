@@ -63,6 +63,8 @@ fn parse_tee_type(s: &str) -> Result<TeeType, String> {
         "csv" => Ok(TeeType::Csv),
         "tdx" => Ok(TeeType::Tdx),
         "tdx-hydra" => Ok(TeeType::TdxHydra),
+        "itrustee" => Ok(TeeType::Itrustee),
+        "virtcca" => Ok(TeeType::Virtcca),
         other => Err(format!("invalid tee_type '{other}'")),
     }
 }
