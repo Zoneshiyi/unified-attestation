@@ -15,6 +15,7 @@ The command-line verifier prints a JSON boolean result only:
 Run from this directory:
 
 ```bash
+cd evidence-verify
 cargo run --features itrustee-verifier -- ../tee-evidence/evidence.json
 cargo run --features virtcca-verifier -- ../tee-evidence/evidence.json
 cargo run --features "virtcca-verifier no_as" -- ../tee-evidence/evidence.json
